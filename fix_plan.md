@@ -16,7 +16,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
 - [x] M3: eval harness `eval/eval.py` + FLAWS-style generator `eval/make_eval_set.py`
       (claim-anchored error injection, answer_key.json), ≥4 corrupted + 2 clean
       papers; prints single score; logs W&B offline run (job_type=reviewer-eval)
-- [ ] M4: S2 claim extraction + S4 verdict labeling (supported/contradicted/
+- [x] M4: S2 claim extraction + S4 verdict labeling (supported/contradicted/
       unverifiable) → Evidence Trace section generation
 - [ ] M5: S5 composer — DRAFT (cheap model) → GROUND (map every sentence to
       finding/claim id; ungrounded praise deleted, ungrounded criticism →
@@ -42,3 +42,4 @@ iter 3 | M1 | eval=3/3 | Verified committed S1 parser and all tests pass; fix_pl
 iter 4 | M2a | eval=8/8 | Metric- and trial-aware ledger tracing now emits deterministic evidence matches and findings with precision-aware rounding and malformed-ledger handling.
 iter 5 | M2b | eval=14/14 | Conservative table-to-prose matching and deterministic delta/percentage recomputation now emit localized, evidence-backed findings.
 iter 6 | M3 | eval=1.100000 | Six-paper claim-anchored eval detects and localizes all four corruptions with zero false positives and logs metrics to W&B offline.
+iter 7 | M4 | eval=1.100000 | Deterministic claim extraction and evidence-bound verdicts now generate per-claim Evidence Trace entries without eval regression.

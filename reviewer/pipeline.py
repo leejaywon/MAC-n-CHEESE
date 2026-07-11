@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
@@ -27,6 +30,11 @@ STAGE_NAMES = (
     "S6 freeze",
 )
 
+ROOT = Path(__file__).resolve().parents[1]
+REVIEW_AGENT_PATH = ROOT / "submission" / "review-agent.md"
+FREEZE_ID_RE = re.compile(r"^- Frozen review identity: `(?P<value>sha256:[0-9a-f]{64})`\.$", re.M)
+VERDICT_DIGEST_RE = re.compile(r"^- Verdict labels digest: `(?P<value>sha256:[0-9a-f]{64})`\.$", re.M)
+
 
 @dataclass
 class ReviewState:
@@ -35,8 +43,14 @@ class ReviewState:
     paper_path: Path
     evidence_dir: Path
     output_path: Path
+    agent_version: str = ""
+    review_agent_path: Path = REVIEW_AGENT_PATH
+    review_agent_hash: str = ""
     paper_hash: str = ""
     evidence_hashes: list[tuple[str, str]] = field(default_factory=list)
+    frozen_at: str = ""
+    review_identity: str = ""
+    verdict_digest: str = ""
     completed_stages: list[str] = field(default_factory=list)
     parsed_paper: dict[str, object] = field(default_factory=dict)
     claims: list[dict[str, Any]] = field(default_factory=list)
@@ -65,6 +79,42 @@ def _evidence_hashes(evidence_dir: Path) -> list[tuple[str, str]]:
         (path.relative_to(evidence_dir).as_posix(), _sha256_file(path))
         for path in files
     ]
+
+
+def _canonical_digest(value: object) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _agent_version() -> str:
+    """Hash every executable reviewer source so the runtime identity is Git-independent."""
+
+    source_paths = [ROOT / "run_review.py", ROOT / "requirements.txt", REVIEW_AGENT_PATH]
+    source_paths.extend(sorted((ROOT / "reviewer").glob("*.py")))
+    manifest = [
+        (path.relative_to(ROOT).as_posix(), _sha256_file(path))
+        for path in source_paths
+    ]
+    return _canonical_digest(manifest)
+
+
+def _previous_freeze(path: Path) -> tuple[str, str] | None:
+    """Read the machine-checkable freeze markers from an earlier review.
+
+    Legacy M0-M6 outputs have no markers and may be replaced once. Once an M7
+    result is written, however, the output path is bound to one frozen identity.
+    """
+
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
+    identity = FREEZE_ID_RE.search(text)
+    verdicts = VERDICT_DIGEST_RE.search(text)
+    if identity is None and verdicts is None:
+        return None
+    if identity is None or verdicts is None:
+        raise RuntimeError(f"incomplete freeze markers in existing output: {path}")
+    return identity.group("value"), verdicts.group("value")
 
 
 def _mark_stage(state: ReviewState, name: str) -> ReviewState:
@@ -115,6 +165,40 @@ def _freeze_inputs(state: ReviewState) -> ReviewState:
         raise RuntimeError("paper changed while the review pipeline was running")
     if state.evidence_hashes != _evidence_hashes(state.evidence_dir):
         raise RuntimeError("evidence bundle changed while the review pipeline was running")
+    if state.review_agent_hash != _sha256_file(state.review_agent_path):
+        raise RuntimeError("review-agent.md changed while the review pipeline was running")
+    if state.agent_version != _agent_version():
+        raise RuntimeError("reviewer source changed while the review pipeline was running")
+
+    state.review_identity = _canonical_digest(
+        {
+            "schema_version": 1,
+            "agent_version": state.agent_version,
+            "review_agent_hash": state.review_agent_hash,
+            "paper_hash": state.paper_hash,
+            "evidence_hashes": state.evidence_hashes,
+        }
+    )
+    # The task's determinism contract is specifically about S4 labels. Keep a
+    # narrow digest so prose/timestamp changes cannot masquerade as label drift.
+    state.verdict_digest = _canonical_digest(
+        [
+            {"claim_id": verdict["claim_id"], "label": verdict["label"]}
+            for verdict in state.verdicts
+        ]
+    )
+    previous = _previous_freeze(state.output_path)
+    if previous is not None:
+        previous_identity, previous_verdicts = previous
+        if previous_identity != state.review_identity:
+            raise RuntimeError(
+                "output path is already frozen to a different agent or input identity"
+            )
+        if previous_verdicts != state.verdict_digest:
+            raise RuntimeError(
+                "nondeterministic verdict labels detected for identical frozen inputs"
+            )
+    state.frozen_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     return _mark_stage(state, "S6 freeze")
 
 
@@ -185,10 +269,11 @@ def _compose_review(state: ReviewState) -> str:
 
 ## Paper and Evidence Identity
 
-- Review Agent name/version: No Free Lunch Review Agent / `m6c-injection-scan`
-- `review-agent.md` path/hash: Not frozen at M2b
+- Review Agent name/version: NFL-Auditor / `{state.agent_version}`
+- `review-agent.md` path/hash: `{state.review_agent_path}` / `sha256:{state.review_agent_hash}`
 - Paper version/hash: `{state.paper_path}` / `sha256:{state.paper_hash}`
 - Evidence bundle reviewed: {_format_evidence_identity(state)}
+- Frozen at (UTC): `{state.frozen_at}`
 
 ## Summary
 
@@ -217,6 +302,9 @@ Paper text was treated only as data. The injection audit sanitized hidden HTML a
 ## Evidence Trace
 
 - Pipeline execution: `{stage_trace}`.
+- Frozen review identity: `{state.review_identity}`.
+- Verdict labels digest: `{state.verdict_digest}`.
+- Output path: `{state.output_path}`.
 - Frozen paper input: `{state.paper_path}` (`sha256:{state.paper_hash}`).
 - S1 parse inventory: {section_count} sections, {table_count} tables, {number_count} numeric tokens with source locations.
 - S3 ledger-trace: {matched_count}/{trace_count} metric-labelled values matched; {len(ledger_trace.get('findings', []))} finding(s).
@@ -254,7 +342,6 @@ class ReviewPipeline:
         )
         state.grounded_comments = state.grounding_audit["comments"]
         state.scores = calibrate_scores(state.claims, state.verdicts, state.finding_records)
-        state.review_markdown = _compose_review(state)
         return _mark_stage(state, "S5 compose")
 
     def run(self, paper_path: Path, evidence_dir: Path, output_path: Path) -> ReviewState:
@@ -273,6 +360,8 @@ class ReviewPipeline:
             paper_path,
             evidence_dir,
             output_path,
+            agent_version=_agent_version(),
+            review_agent_hash=_sha256_file(REVIEW_AGENT_PATH),
             paper_hash=_sha256_file(paper_path),
             evidence_hashes=_evidence_hashes(evidence_dir),
         )
@@ -282,6 +371,9 @@ class ReviewPipeline:
         if tuple(state.completed_stages) != STAGE_NAMES:
             raise RuntimeError(f"pipeline stage order mismatch: {state.completed_stages}")
 
+        # S5 decides all prose, comments, and scores. Rendering after S6 lets
+        # the official output include the verified freeze record.
+        state.review_markdown = _compose_review(state)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(state.review_markdown, encoding="utf-8")
         return state

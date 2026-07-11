@@ -23,7 +23,7 @@ def main() -> int:
     args = _parser().parse_args()
     try:
         state = run_pipeline(args.paper, args.evidence_dir, args.out)
-    except (FileNotFoundError, NotADirectoryError, ValueError) as error:
+    except (FileNotFoundError, NotADirectoryError, RuntimeError, ValueError) as error:
         _parser().error(str(error))
     print(f"wrote {state.output_path} ({', '.join(state.completed_stages)})")
     return 0
@@ -31,4 +31,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

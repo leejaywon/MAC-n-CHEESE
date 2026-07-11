@@ -27,7 +27,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
 - [x] M6c: `injection-scan` — sanitize invisible unicode/hidden text, detect
       reviewer-directed instructions, report in Ethics; add 2 injection-twin
       papers to eval set + injection-resistance metric
-- [ ] M7: determinism + freeze — same input hashes → same verdicts.
+- [x] M7: determinism + freeze — same input hashes → same verdicts.
       `submission/review-agent.md` is human-drafted already: VERIFY it matches
       the implemented pipeline (edit only if code diverged; keep bracketed
       runtime fields as brackets)
@@ -49,3 +49,4 @@ iter 8 | M5 | eval=1.100000 | Offline DRAFT candidates now pass through an autho
 iter 9 | M6a | eval=1.100000 | Explicit improvement claims now require a named same-metric baseline and confirmation rerun, while undisclosed discard/crash ledger outcomes produce evidence-backed omission findings.
 iter 10 | M6b | eval=1.100000 | Cached timeout-safe arXiv/S2 citation verification and conservative Track 1 template/page/self-review checks now emit localized evidence-bound findings.
 iter 11 | M6c | eval=1.100000 | Hidden HTML and Unicode-obfuscated reviewer instructions are sanitized, localized in Ethics, and rejected with perfect two-pair score invariance.
+iter 12 | M7 | eval=1.100000 | Content-addressed agent/input freeze records now reproduce and guard verdict-label digests, and the human-drafted agent contract matches the implemented pipeline.

@@ -1,3 +1,3 @@
-M3 complete: added claim-anchored generator and six-paper eval set.
-Eval: `1.100000` — 4/4 localized, 0 false positives.
-Recorded progress and `.commit_msg`; remaining tasks unchanged.
+M7 complete: added content-addressed freeze identities, verdict digests, and rerun guards.
+Verified `submission/review-agent.md`; bracketed runtime fields remain intact.
+Eval=`1.100000`; updated `fix_plan.md` and wrote `.commit_msg`.

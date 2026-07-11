@@ -7,9 +7,9 @@
 
 Build an **evidence-bound audit reviewer**: given a frozen Track 1 paper and its
 evidence bundle, produce an ICML-style structured review where **every claim in
-the review is mechanically traceable**. Not a generic paper reviewer — an
-auditor specialized for THIS event's evidence contract (`experiments.jsonl`
-ledger, evidence paths/hashes, val_bpb claims, self-review checklist).
+the review is mechanically traceable**. It audits THIS event's evidence contract
+(`experiments.jsonl` ledger, evidence paths/hashes, val_bpb claims, self-review
+checklist).
 
 Design doctrine (from prior art):
 - **statcheck/GRIM**: never ask the LLM "does this look right?" — recompute and diff.

@@ -22,11 +22,11 @@
 
 ## 2. 우리가 특별하게 구현한 것 (심사 때 그대로 말할 것)
 
-### Track 2 리뷰어 — "감상문이 아니라 감사(audit)"
+### Track 2 리뷰어 — 논문을 감사(audit)한다
 
-1. **이벤트 증거규격 특화 감사기**: 일반 논문 리뷰어가 아니라, 이 대회 공식 규격
-   (`experiments.jsonl` ledger, evidence 해시, val_bpb 주장)을 그라운드트루스로
-   대조한다. 리뷰가 vibes가 아니라 재계산이다. (statcheck/GRIM 계보)
+1. **이벤트 증거규격 특화 감사기**: 대회 공식 규격(`experiments.jsonl` ledger,
+   evidence 해시, val_bpb 주장)을 그라운드트루스로 대조한다. 모든 지적은
+   재계산으로 뒷받침된다. (statcheck/GRIM 계보)
 2. **기계 검증 배터리 8종**: ledger-trace / 표↔본문 일치 / 산술 재계산 /
    baseline 공정성 / 인용 실재(arXiv·S2 API) / 템플릿 준수 / **부정결과 누락
    검출**(ledger에 discard·crash가 있는데 페이퍼에 없으면 플래그) / 인젝션 스캔
@@ -53,8 +53,8 @@
    express, FA3, SSSL 윈도우, ReLU², value embeds...)이라 유명 트릭 추가는 무효.
    대신 실제 미스매치를 코드에서 발견: 스케줄 전부가 시간기반인데 Muon momentum
    ramp만 step기반(`step/300`) → A100(스텝 ~절반)에서 어긋남 = H2 가설.
-   H1(배치 재적합)→H5까지 prior 강도순 사전 랭킹 — n=3 예산은 탐색이 아니라
-   착취가 정답 (AlphaEvolve/FunSearch: 제안은 LLM, 판정은 evaluator만).
+   H1(배치 재적합)→H5까지 prior 강도순 사전 랭킹 — n=3 예산에서는
+   착취(exploitation)가 정답 (AlphaEvolve/FunSearch: 제안은 LLM, 판정은 evaluator만).
 3. **6-state 오퍼레이터**: 상태를 ledger에서 읽어 다음 행동 하나만 수행. 시간
    규율 내장(15:00 candidate 컷, 15:20 페이퍼 우선). 공식 Integrity Gate(순차,
    candidate≤3, 확인런, NEVER-STOP 금지) 준수가 프롬프트에 박혀 있다.

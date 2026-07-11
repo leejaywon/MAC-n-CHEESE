@@ -153,7 +153,9 @@ def ground_comments(
 
 
 def calibrate_scores(
-    claims: list[dict[str, Any]], verdicts: list[dict[str, Any]]
+    claims: list[dict[str, Any]],
+    verdicts: list[dict[str, Any]],
+    findings: list[dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Apply the explicit §5 borderline-first scoring policy."""
 
@@ -167,6 +169,9 @@ def calibrate_scores(
     anchor = claims[0]["id"] if claims else "no-extracted-claim"
     supported_anchor = headline_supported[0]["id"] if headline_supported else anchor
     contradicted_anchor = contradicted[0]["id"] if contradicted else anchor
+    template_findings = [
+        finding for finding in (findings or []) if finding.get("check") == "template-compliance"
+    ]
 
     soundness = max(1, min(4, 2 + bool(headline_supported) - bool(contradicted)))
     if contradicted:
@@ -176,10 +181,20 @@ def calibrate_scores(
     else:
         soundness_reason = f"No headline result has implemented mechanical support [{anchor}]."
 
-    # M6b will add template checks. Until then, presentation and novelty cannot
-    # be promoted above borderline from result validity alone.
-    presentation = 2
-    presentation_reason = f"The extracted claim is readable, but template compliance is not yet mechanically checked [{anchor}]."
+    # Passing the structural audit alone does not establish clear writing, so
+    # it cannot promote presentation above borderline. Proven violations do
+    # demote it, while an unknown Markdown page count is kept unverifiable.
+    presentation = 1 if template_findings else 2
+    if template_findings:
+        presentation_reason = (
+            f"A deterministic template violation lowers presentation [{template_findings[0]['id']}]; "
+            f"the claim inventory begins at [{anchor}]."
+        )
+    else:
+        presentation_reason = (
+            f"The structural template audit found no proven violation, but structure alone does not "
+            f"establish clear presentation [{anchor}]."
+        )
     contribution = 2
     contribution_reason = f"The evidence trace establishes result support, not novelty or broad significance [{anchor}]."
 

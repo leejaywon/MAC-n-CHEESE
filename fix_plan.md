@@ -22,7 +22,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
       finding/claim id; ungrounded praise deleted, ungrounded criticism →
       Questions); score calibration rules from spec §5
 - [x] M6a: mech checks `baseline-fairness` + `negative-evidence`
-- [ ] M6b: mech checks `citation-existence` (arXiv/S2 API, cached) +
+- [x] M6b: mech checks `citation-existence` (arXiv/S2 API, cached) +
       `template-compliance`
 - [ ] M6c: `injection-scan` — sanitize invisible unicode/hidden text, detect
       reviewer-directed instructions, report in Ethics; add 2 injection-twin
@@ -47,3 +47,4 @@ iter 6 | M3 | eval=1.100000 | Six-paper claim-anchored eval detects and localize
 iter 7 | M4 | eval=1.100000 | Deterministic claim extraction and evidence-bound verdicts now generate per-claim Evidence Trace entries without eval regression.
 iter 8 | M5 | eval=1.100000 | Offline DRAFT candidates now pass through an authoritative GROUND filter with traceable comments and borderline-first calibrated scores.
 iter 9 | M6a | eval=1.100000 | Explicit improvement claims now require a named same-metric baseline and confirmation rerun, while undisclosed discard/crash ledger outcomes produce evidence-backed omission findings.
+iter 10 | M6b | eval=1.100000 | Cached timeout-safe arXiv/S2 citation verification and conservative Track 1 template/page/self-review checks now emit localized evidence-bound findings.

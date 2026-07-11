@@ -158,8 +158,14 @@ def calibrate_scores(
     claims: list[dict[str, Any]],
     verdicts: list[dict[str, Any]],
     findings: list[dict[str, Any]] | None = None,
+    self_review_dishonest: int = 0,
 ) -> dict[str, dict[str, Any]]:
-    """Apply the explicit §5 borderline-first scoring policy."""
+    """Apply the explicit §5 borderline-first scoring policy.
+
+    An integrity breach — a proven contradiction OR a dishonest self-certification
+    — is a serious soundness problem that a supported headline result must not
+    offset. ``self_review_dishonest`` is the count of dishonest Self-Review boxes.
+    """
 
     verdict_by_claim = {item["claim_id"]: item for item in verdicts}
     supported = [claim for claim in claims if verdict_by_claim[claim["id"]]["label"] == "supported"]
@@ -175,13 +181,21 @@ def calibrate_scores(
         finding for finding in (findings or []) if finding.get("check") == "template-compliance"
     ]
 
-    soundness = max(1, min(4, 2 + bool(headline_supported) - bool(contradicted)))
-    if contradicted:
-        soundness_reason = f"A deterministic contradiction lowers confidence in correctness [{contradicted_anchor}]."
+    breach_count = len(contradicted) + self_review_dishonest
+    integrity_breach = breach_count > 0
+    if integrity_breach:
+        soundness = 1
+        soundness_reason = (
+            f"A proven integrity breach ({len(contradicted)} contradiction(s), "
+            f"{self_review_dishonest} dishonest self-certification(s)) undermines soundness "
+            f"[{contradicted_anchor}]."
+        )
     elif headline_supported:
+        soundness = 3
         soundness_reason = f"At least one headline result has direct mechanical support [{supported_anchor}]."
     else:
-        soundness_reason = f"No headline result has implemented mechanical support [{anchor}]."
+        soundness = 2
+        soundness_reason = f"No headline result has mechanical support, but none is contradicted [{anchor}]."
 
     # Passing the structural audit alone does not establish clear writing, so
     # it cannot promote presentation above borderline. Proven violations do
@@ -200,18 +214,19 @@ def calibrate_scores(
     contribution = 2
     contribution_reason = f"The evidence trace establishes result support, not novelty or broad significance [{anchor}]."
 
-    overall = 3
-    if headline_supported:
-        overall += 1
-    if contradicted:
-        overall -= 1
-    overall = max(1, min(5, overall))
-    if contradicted:
-        overall_reason = f"The borderline anchor is reduced by a contradicted claim [{contradicted_anchor}]."
+    if integrity_breach:
+        overall = 1 if breach_count >= 2 else 2
+        overall_reason = (
+            f"A proven integrity breach ({breach_count} issue(s)) drives a reject recommendation; "
+            f"supported results do not offset it [{contradicted_anchor}]."
+        )
     elif headline_supported:
-        overall_reason = f"The borderline anchor is raised only because a headline claim is supported [{supported_anchor}]."
+        overall = 4
+        overall_reason = f"A supported headline result with no proven contradiction supports acceptance [{supported_anchor}]."
     else:
+        overall = 3
         overall_reason = f"The recommendation remains borderline without a supported headline claim [{anchor}]."
+    overall = max(1, min(5, overall))
 
     fraction = len(verifiable) / len(claims) if claims else 0.0
     confidence = max(1, min(5, 1 + round(4 * fraction)))

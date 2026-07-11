@@ -15,7 +15,7 @@
  외부: VESSL A100(잡 실행) · W&B offline(증적) · git(감사추적)
 ```
 
-**Ralph 패턴 요지**: 한 세션을 오래 살리지 않는다. 매 iteration fresh context로
+**Ralph 패턴 요지**: 한 세션을 오래 살리지 않고, 매 iteration fresh context로
 `codex exec`를 재호출하고, 진행상태는 전부 파일(fix_plan/ledger)과 git에 산다.
 컨텍스트 부패가 구조적으로 없고, 어떤 iteration이 죽어도 다음 iteration이 파일만
 읽고 이어간다.
@@ -23,6 +23,7 @@
 ## 2. 우리가 특별하게 구현한 것 (심사 때 그대로 말할 것)
 
 ### Track 2 리뷰어 — "감상문이 아니라 감사(audit)"
+
 1. **이벤트 증거규격 특화 감사기**: 일반 논문 리뷰어가 아니라, 이 대회 공식 규격
    (`experiments.jsonl` ledger, evidence 해시, val_bpb 주장)을 그라운드트루스로
    대조한다. 리뷰가 vibes가 아니라 재계산이다. (statcheck/GRIM 계보)
@@ -44,6 +45,7 @@
    PROMPT 하드룰로 금지. (몇 시간 돌리면 반드시 시도한다)
 
 ### Track 1 캠페인 — "지는 그림이 없는 프레임"
+
 1. **리서치 프레임**: "시간고정(5분) 벤치마크에서 H100 튜닝 상수는 A100에
    이식되는가?" — 개선 성공하면 개선 페이퍼, 전부 실패해도 "시간기반 스케줄의
    하드웨어 강건성"이라는 유효한 negative-result 페이퍼. 어느 쪽도 논문이 된다.
@@ -60,6 +62,7 @@
    전 로직을 무과금 리허설. 당일은 플래그만 끈다.
 
 ### 하네스 공통
+
 - **커밋 프로토콜**: codex 샌드박스가 `.git` 쓰기를 차단 → 에이전트는
   `.commit_msg`/`.cookbook_commit_msg`만 남기고 바깥 루프가 커밋·푸시. (드라이런에서
   실제로 발견해서 고친 것 — "실패에서 배운 sign-post"의 실례로 심사 때 언급 가치)
@@ -78,6 +81,7 @@
 (`codex login --api-key ...`), 아니면 구독 유지.
 
 **~11:00 (세팅 시간)** — Track 1 사전 배관 (과금 시작, 승인하고 진행):
+
 ```bash
 cd 2026_07_Ralphthon-track1
 # ① fork 확인 (아직이면 GitHub에서 fork 후 remote 교체)
@@ -94,14 +98,19 @@ vesslctl volume create ... && bash vessl-cloud-cookbook/autoresearch/batch-job/p
 PROMPT sign-post 보강 — **루프 시작 후엔 못 고친다.**
 
 **12:30 루프 시작 (이후 노터치)**
+
 ```bash
+# 시작 직전 필수: 리허설 잔재 제거
+cd 2026_07_Ralphthon-track1 && rm -f campaign/cutoff_override && git rm -q --cached campaign/cutoff_override 2>/dev/null; ls campaign/experiments.jsonl 2>/dev/null && echo "⚠️ mock ledger 남아있음 — logs/로 치울 것"
 # 노트북 A (Track 2): cd 2026_07_Ralphthon && ./ralph.sh PROMPT.md 40
 # 노트북 B (Track 1): cd 2026_07_Ralphthon-track1 && ./ralph.sh PROMPT.md 30   # MOCK 플래그 없이!
 ```
+
 관전(읽기만): `tail -f logs/iter_*.log`, `git log --oneline`,
 `cat campaign/experiments.jsonl`, W&B offline 디렉토리.
 
 **15:30 루프 정지** — 자연 종료 or `touch .ralph_stop`. **사람 편집 허용 구간**:
+
 - 페이퍼: 문장 다듬기만. **숫자를 새로 쓰거나 고치지 말 것** (ledger에 없는 숫자
   = 우리 리뷰어도 잡고 심사위원도 잡는다). 페이지수 2–4 확인.
 - review-agent.md: 브래킷(버전 SHA, 해시) 최종 기입.
@@ -115,14 +124,14 @@ PROMPT sign-post 보강 — **루프 시작 후엔 못 고친다.**
 
 ## 4. 트러블슈팅
 
-| 증상 | 대응 |
-|---|---|
-| 루프가 같은 태스크 반복 실패 | 12:30 전이면 sign-post 추가. 이후면 그냥 둔다 — 다른 태스크로 넘어가게 설계됨 |
+| 증상                              | 대응                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------- |
+| 루프가 같은 태스크 반복 실패      | 12:30 전이면 sign-post 추가. 이후면 그냥 둔다 — 다른 태스크로 넘어가게 설계됨   |
 | rate limit (iteration 급감속/429) | API key 계정 전환 후 루프 재시작 (재시작은 harness 조작 아님 — 단 현장 룰 확인) |
-| VESSL 잡 폴링 타임아웃 | 잡은 계속 돈다. 다음 iteration이 `vesslctl job show`로 회수 — 설계된 경로 |
-| A100 큐 정체 | 15:00 컷이 자동으로 candidate 수를 줄인다. baseline+1개+확인런이면 페이퍼 성립 |
-| Track 1 전멸 (크레딧/클러스터) | Track 2 단독 제출 (공식 Track 2-only 경로). 리뷰 대상 페이퍼는 현장 제공분 사용 |
-| 노트북 1대 고장 | 한 레포씩 순차 실행 — ralph.sh는 어디서든 `git clone` 후 즉시 재개 가능 |
+| VESSL 잡 폴링 타임아웃            | 잡은 계속 돈다. 다음 iteration이 `vesslctl job show`로 회수 — 설계된 경로       |
+| A100 큐 정체                      | 15:00 컷이 자동으로 candidate 수를 줄인다. baseline+1개+확인런이면 페이퍼 성립  |
+| Track 1 전멸 (크레딧/클러스터)    | Track 2 단독 제출 (공식 Track 2-only 경로). 리뷰 대상 페이퍼는 현장 제공분 사용 |
+| 노트북 1대 고장                   | 한 레포씩 순차 실행 — ralph.sh는 어디서든 `git clone` 후 즉시 재개 가능         |
 
 ## 5. 오늘 밤 남은 체크리스트
 

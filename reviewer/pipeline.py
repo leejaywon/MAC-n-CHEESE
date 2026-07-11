@@ -7,9 +7,11 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
 
+from .baseline_fairness import check_baseline_fairness
 from .claims import extract_claims, label_verdicts
 from .composer import calibrate_scores, draft_comments, ground_comments
 from .mechanical_checks import check_arithmetic, check_internal_consistency, check_ledger_trace
+from .negative_evidence import check_negative_evidence
 from .parser import parse_markdown
 
 
@@ -79,6 +81,8 @@ def _run_mechanical_checks(state: ReviewState) -> ReviewState:
         check_ledger_trace(state.parsed_paper, state.evidence_dir),
         check_internal_consistency(state.parsed_paper),
         check_arithmetic(state.parsed_paper),
+        check_baseline_fairness(state.parsed_paper, state.evidence_dir),
+        check_negative_evidence(state.parsed_paper, state.evidence_dir),
     )
     for result in checks:
         state.mechanical_checks[result["check"]] = result
@@ -128,6 +132,8 @@ def _compose_review(state: ReviewState) -> str:
     finding_count = len(state.mechanical_findings)
     internal = state.mechanical_checks.get("internal-consistency", {})
     arithmetic = state.mechanical_checks.get("arithmetic", {})
+    baseline_fairness = state.mechanical_checks.get("baseline-fairness", {})
+    negative_evidence = state.mechanical_checks.get("negative-evidence", {})
     finding_lines = "\n".join(
         f"- [{finding['id']}] {finding['check']} at {finding['location']}: {finding['observed']}; expected {finding['expected']} "
         f"(evidence: `{finding['evidence_path']}`)."
@@ -170,7 +176,7 @@ def _compose_review(state: ReviewState) -> str:
 
 ## Paper and Evidence Identity
 
-- Review Agent name/version: No Free Lunch Review Agent / `m5-grounded-composer`
+- Review Agent name/version: No Free Lunch Review Agent / `m6a-fairness-negative-evidence`
 - `review-agent.md` path/hash: Not frozen at M2b
 - Paper version/hash: `{state.paper_path}` / `sha256:{state.paper_hash}`
 - Evidence bundle reviewed: {_format_evidence_identity(state)}
@@ -197,7 +203,7 @@ The evidence audit extracted {len(state.claims)} claims and labeled {label_count
 
 ## Ethics and Limitations
 
-Citation, injection, ethics, and broader evidence-quality checks are not implemented, so claims outside S3 remain unverifiable [{state.claims[0]['id'] if state.claims else 'no-extracted-claim'}].
+Negative experiment outcomes were audited against the supplied ledgers. Citation, injection, ethics, and broader evidence-quality checks are not yet implemented, so claims outside S3 remain unverifiable [{state.claims[0]['id'] if state.claims else 'no-extracted-claim'}].
 
 ## Evidence Trace
 
@@ -207,6 +213,8 @@ Citation, injection, ethics, and broader evidence-quality checks are not impleme
 - S3 ledger-trace: {matched_count}/{trace_count} metric-labelled values matched; {len(ledger_trace.get('findings', []))} finding(s).
 - S3 internal-consistency: {len(internal.get('traces', []))} comparison(s), {len(internal.get('findings', []))} finding(s).
 - S3 arithmetic: {len(arithmetic.get('traces', []))} recomputation(s), {len(arithmetic.get('findings', []))} finding(s).
+- S3 baseline-fairness: {len(baseline_fairness.get('traces', []))} explicit improvement claim(s), {len(baseline_fairness.get('findings', []))} finding(s).
+- S3 negative-evidence: {len(negative_evidence.get('traces', []))} discard/crash outcome(s), {len(negative_evidence.get('findings', []))} omission finding(s).
 - S5 DRAFT/GROUND: {len(state.draft_comments)} candidate comment(s), {len(state.grounded_comments)} retained, {len(state.grounding_audit.get('deleted', []))} deleted, {len(state.grounding_audit.get('reclassified', []))} criticism comment(s) converted to questions.
 - S2/S4 claim verdicts:
 {evidence_trace_lines}

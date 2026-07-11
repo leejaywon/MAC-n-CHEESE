@@ -86,8 +86,8 @@
 cd 2026_07_Ralphthon-track1
 # ① fork 확인 (아직이면 GitHub에서 fork 후 remote 교체)
 git -C vessl-cloud-cookbook remote -v
-# ② 당일 캠페인 브랜치 — 반드시 핀 SHA에서 분기 (rehearsal HEAD에는 mock으로 keep된 train.py 변경이 있음!)
-git -C vessl-cloud-cookbook checkout 97a0af14b0acae042162b1f70f17fbe2d570afa2 -b autoresearch/nfl-day && git -C vessl-cloud-cookbook push -u origin autoresearch/nfl-day
+# ② 당일 캠페인 브랜치로 전환 (전날 밤 핀 SHA에서 생성·푸시 완료 — checkout만 하면 됨)
+git -C vessl-cloud-cookbook checkout autoresearch/nfl-day && git -C vessl-cloud-cookbook log --oneline -1  # 97a0af1이어야 함
 # ③ object volume 생성 + prep job (CPU $0.30/hr, 캐시 시딩 — 런북 절차)
 vesslctl volume create ... && bash vessl-cloud-cookbook/autoresearch/batch-job/prep.sh
 # ④ campaign/env.sh의 TODO 3개 채우기 (fork URL / 브랜치 / 볼륨 slug)

@@ -12,10 +12,21 @@ files. Progress lives in files and git, not in your memory.
 3. Implement it FULLY. No placeholders, no stubs, no "simplified for now".
    Before claiming something doesn't exist, search the codebase first.
 4. Verify: run `source .venv/bin/activate && python eval/eval.py` if it exists
-   (else run the task's own test). Record the eval score.
-   - If your change made the eval score WORSE, revert your change
-     (file-scoped git checkout of the files you touched) and write what you
-     learned into fix_plan.md instead.
+   (else run the task's own test). Record the printed score AND the stderr
+   diagnostic line (detection / fp / completeness / external).
+   - Regression guard (REVIEWER CODE only): if you changed only `reviewer/` or
+     `run_review.py` and the primary detection metric dropped on the existing
+     cases, restore the previous content of the files you touched (re-read from
+     the last commit via `git show HEAD:<path>` — read-only git commands work)
+     and write what you learned into fix_plan.md instead.
+   - Eval-set HARDENING is NOT a regression. When a task tells you to add a
+     harder TRUE ground-truth case, the score drops because the bar rose —
+     record the new lower score as the baseline and DO NOT revert it. The next
+     iterations climb it by strengthening a deterministic check. (Adding a real
+     harder case ≠ editing the answer key to inflate; the latter stays banned.)
+   - A flaw no deterministic check can reach does NOT belong in the detection
+     metric. Put it in Weaknesses/Questions under the false-positive rule. Never
+     invent a keyword hack that only passes the one planted case.
 5. Update `fix_plan.md`: check off the task, append one line to the Progress
    Log: `iter <n> | <task> | eval=<score> | <one-line result>`.
    Add any newly discovered bugs as new unchecked tasks (bottom).

@@ -8,6 +8,10 @@
       "evidence_dir": "evidence/clean_confirmed_accuracy",
       "flaws": []
     },
+    "clean_prose_ratio.md": {
+      "evidence_dir": "evidence/clean_prose_ratio",
+      "flaws": []
+    },
     "clean_val_bpb.md": {
       "evidence_dir": "evidence/clean_val_bpb",
       "flaws": []
@@ -23,6 +27,22 @@
             "internal-consistency"
           ],
           "injected_text": "The candidate-1 achieved loss of 1.40.",
+          "location": {
+            "line": 21
+          }
+        }
+      ]
+    },
+    "corrupt_prose_ratio.md": {
+      "evidence_dir": "evidence/corrupt_prose_ratio",
+      "flaws": [
+        {
+          "claim": "Accuracy rose from 70.0 to 75.0, a relative gain of 7.14%.",
+          "description": "The prose relative gain is not recomputable from the stated from/to values.",
+          "expected_checks": [
+            "arithmetic"
+          ],
+          "injected_text": "Accuracy rose from 70.0 to 75.0, a relative gain of 17.14%.",
           "location": {
             "line": 21
           }

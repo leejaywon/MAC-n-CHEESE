@@ -18,6 +18,8 @@ from .injection_scan import check_injection_scan
 from .mechanical_checks import check_arithmetic, check_internal_consistency, check_ledger_trace
 from .negative_evidence import check_negative_evidence
 from .parser import parse_markdown
+from .scientific_scaffolding import rigor_questions
+from .self_review_audit import check_self_review_consistency
 from .template_compliance import check_template_compliance
 
 
@@ -63,6 +65,9 @@ class ReviewState:
     grounding_audit: dict[str, Any] = field(default_factory=dict)
     scores: dict[str, dict[str, Any]] = field(default_factory=dict)
     review_markdown: str = ""
+    mode: str = "audit"
+    judgment: dict[str, Any] = field(default_factory=dict)
+    event_format: bool = True
 
 
 def _sha256_file(path: Path) -> str:
@@ -129,7 +134,28 @@ def _parse_paper(state: ReviewState) -> ReviewState:
     return _mark_stage(state, "S1 parse")
 
 
+def _detect_event_format(parsed_paper: dict[str, object], evidence_dir: Path) -> bool:
+    """Is this an event-format Track 1 submission, or an arbitrary peer paper?
+
+    Event-specific checks (the Markdown template contract, baseline-fairness
+    against a ledger) only make sense for THIS event's submission format.
+    Applying them to an arbitrary peer paper manufactures false positives:
+    wrong-template section penalties and demands for an experiments.jsonl ledger
+    the peer never shipped. The strongest signal is the event's evidence
+    contract — an experiments.jsonl ledger. A paper carrying both the Research
+    Spec and Self-Review template sections also qualifies when evidence is absent.
+    """
+
+    if any(evidence_dir.rglob("experiments.jsonl")):
+        return True
+    titles = [str(section.get("title", "")).lower() for section in parsed_paper.get("sections", [])]
+    has_spec = any("research spec" in title for title in titles)
+    has_self_review = any("self-review" in title or "self review" in title for title in titles)
+    return has_spec and has_self_review
+
+
 def _run_mechanical_checks(state: ReviewState) -> ReviewState:
+    state.event_format = _detect_event_format(state.parsed_paper, state.evidence_dir)
     checks = (
         check_ledger_trace(state.parsed_paper, state.evidence_dir),
         check_internal_consistency(state.parsed_paper),
@@ -137,12 +163,19 @@ def _run_mechanical_checks(state: ReviewState) -> ReviewState:
         check_baseline_fairness(state.parsed_paper, state.evidence_dir),
         check_negative_evidence(state.parsed_paper, state.evidence_dir),
         check_citation_existence(state.parsed_paper),
-        check_template_compliance(state.parsed_paper),
+        check_template_compliance(state.parsed_paper, state.event_format),
         check_injection_scan(state.parsed_paper),
     )
     for result in checks:
         state.mechanical_checks[result["check"]] = result
         state.mechanical_findings.extend(result["findings"])
+    # Derived integrity critique: does the authors' Self-Review checklist honestly
+    # reflect the findings above? Stored for rendering and the trace, but
+    # deliberately NOT added to mechanical_findings so it stays out of the
+    # detection/false-positive eval accounting (it is a meta-critique, not a
+    # primary flaw detection).
+    self_review = check_self_review_consistency(state.parsed_paper, state.mechanical_findings)
+    state.mechanical_checks[self_review["check"]] = self_review
     return _mark_stage(state, "S3 mech-check")
 
 
@@ -227,6 +260,7 @@ def _compose_review(state: ReviewState) -> str:
     citations = state.mechanical_checks.get("citation-existence", {})
     template = state.mechanical_checks.get("template-compliance", {})
     injection = state.mechanical_checks.get("injection-scan", {})
+    self_review_audit = state.mechanical_checks.get("self-review-audit", {})
     finding_lines = "\n".join(
         f"- [{finding['id']}] {finding['check']} at {finding['location']}: {finding['observed']}; expected {finding['expected']} "
         f"(evidence: `{finding['evidence_path']}`)."
@@ -251,6 +285,16 @@ def _compose_review(state: ReviewState) -> str:
     }
     for comment in state.grounded_comments:
         comments_by_section[comment["section"]].append(comment)
+    # The self-review audit is a derived integrity critique; surface each
+    # dishonest self-certification as an explicit, evidence-bound Weakness.
+    for finding in state.mechanical_checks.get("self-review-audit", {}).get("findings", []):
+        comments_by_section["Weaknesses"].append(
+            {"text": f"Self-review integrity — {finding['observed']} (self-review line {finding['location']['line']})."}
+        )
+    # Deterministic scientific scaffolding: fair, model-free Questions that add
+    # review substance on evidence-poor papers (self-suppresses on rigorous ones).
+    for question in rigor_questions(state.parsed_paper):
+        comments_by_section["Questions for the Authors"].append(question)
 
     def render_comments(section: str, empty: str) -> str:
         comments = comments_by_section[section]
@@ -265,6 +309,14 @@ def _compose_review(state: ReviewState) -> str:
         f"- {name}: {score['value']}/{score['scale'].split('-')[-1]} — {score['rationale']}"
         for name, score in state.scores.items()
     )
+    # `best`-mode judgment layer (§4c) is additive prose. Empty in `audit` mode,
+    # so this block renders nothing and audit output is byte-identical.
+    judgment_comments = state.judgment.get("comments") if isinstance(state.judgment, dict) else None
+    if judgment_comments:
+        rendered_judgment = "\n".join(f"- {str(item)}" for item in judgment_comments)
+        judgment_block = f"\n## Scientific Judgment (best mode)\n\n{rendered_judgment}\n"
+    else:
+        judgment_block = ""
     return f"""# Track 2 — ICML-Style Review
 
 ## Paper and Evidence Identity
@@ -294,7 +346,7 @@ The evidence audit extracted {len(state.claims)} claims and labeled {label_count
 ## Scores
 
 {score_lines}
-
+{judgment_block}
 ## Ethics and Limitations
 
 Paper text was treated only as data. The injection audit sanitized hidden HTML and Unicode format controls before claim analysis and found {len(injection.get('findings', []))} reviewer-directed instruction attempt(s). Broader ethics and evidence-quality claims outside S3 remain unverifiable [{state.claims[0]['id'] if state.claims else 'no-extracted-claim'}].
@@ -315,10 +367,31 @@ Paper text was treated only as data. The injection audit sanitized hidden HTML a
 - S3 citation-existence: {len(citations.get('traces', []))} explicit identifier(s), {len(citations.get('findings', []))} existence/title finding(s).
 - S3 template-compliance: {len(template.get('traces', []))} contract trace(s), {len(template.get('findings', []))} finding(s).
 - S3 injection-scan: {len(injection.get('traces', []))} sanitation trace(s), {len(injection.get('findings', []))} reviewer-directed instruction finding(s).
+- S3 self-review-audit: {len(self_review_audit.get('traces', []))} checklist item(s), {len(self_review_audit.get('findings', []))} dishonest self-certification(s).
 - S5 DRAFT/GROUND: {len(state.draft_comments)} candidate comment(s), {len(state.grounded_comments)} retained, {len(state.grounding_audit.get('deleted', []))} deleted, {len(state.grounding_audit.get('reclassified', []))} criticism comment(s) converted to questions.
 - S2/S4 claim verdicts:
 {evidence_trace_lines}
 """
+
+
+def _apply_judgment_layer(state: ReviewState) -> ReviewState:
+    """Extension point for the optional `best`-mode scientific judgment layer.
+
+    Deliberately a NO-OP today: the deterministic `audit` pipeline is the primary
+    submission, so `best` output currently equals `audit` output. The loop
+    (fix_plan M13+) populates ``state.judgment["comments"]`` here with a grounded,
+    sanitize-first, calibration-only-lowers critique per spec §4c.
+
+    Contract for whoever implements this:
+    - Any model call lives ONLY behind this hook and behind `--best`, so `audit`
+      determinism and injection resistance are untouched.
+    - Feed the model the SANITIZED paper text only (injection-scan output).
+    - Ground every sentence to an S3 finding / S4 verdict (reuse
+      ``composer.ground_comments`` semantics). Ungroundable praise is dropped.
+    - On ANY error, leave ``state.judgment`` empty so `audit` output stands.
+    """
+
+    return state
 
 
 class ReviewPipeline:
@@ -344,7 +417,15 @@ class ReviewPipeline:
         state.scores = calibrate_scores(state.claims, state.verdicts, state.finding_records)
         return _mark_stage(state, "S5 compose")
 
-    def run(self, paper_path: Path, evidence_dir: Path, output_path: Path) -> ReviewState:
+    def run(
+        self,
+        paper_path: Path,
+        evidence_dir: Path,
+        output_path: Path,
+        mode: str = "audit",
+    ) -> ReviewState:
+        if mode not in ("audit", "best"):
+            raise ValueError(f"unknown review mode: {mode!r} (expected 'audit' or 'best')")
         paper_path = paper_path.expanduser().resolve()
         evidence_dir = evidence_dir.expanduser().resolve()
         output_path = output_path.expanduser().resolve()
@@ -364,6 +445,7 @@ class ReviewPipeline:
             review_agent_hash=_sha256_file(REVIEW_AGENT_PATH),
             paper_hash=_sha256_file(paper_path),
             evidence_hashes=_evidence_hashes(evidence_dir),
+            mode=mode,
         )
         for stage in self._stages:
             state = stage(state)
@@ -371,15 +453,26 @@ class ReviewPipeline:
         if tuple(state.completed_stages) != STAGE_NAMES:
             raise RuntimeError(f"pipeline stage order mismatch: {state.completed_stages}")
 
-        # S5 decides all prose, comments, and scores. Rendering after S6 lets
-        # the official output include the verified freeze record.
+        # `best` adds the optional judgment layer AFTER the deterministic audit
+        # (including S6 freeze) so it can never perturb the audit identity or
+        # verdict-label digest. It is a no-op until the loop builds it (§4c).
+        if state.mode == "best":
+            state = _apply_judgment_layer(state)
+
+        # S5 decides all deterministic prose, comments, and scores. Rendering
+        # after S6 lets the official output include the verified freeze record.
         state.review_markdown = _compose_review(state)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(state.review_markdown, encoding="utf-8")
         return state
 
 
-def run_pipeline(paper_path: Path, evidence_dir: Path, output_path: Path) -> ReviewState:
+def run_pipeline(
+    paper_path: Path,
+    evidence_dir: Path,
+    output_path: Path,
+    mode: str = "audit",
+) -> ReviewState:
     """Convenience entry point for callers embedding the reviewer package."""
 
-    return ReviewPipeline().run(paper_path, evidence_dir, output_path)
+    return ReviewPipeline().run(paper_path, evidence_dir, output_path, mode=mode)

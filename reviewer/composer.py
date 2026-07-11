@@ -45,16 +45,18 @@ def draft_comments(
                 }
             )
         elif label == "contradicted":
-            comments.append(
-                {
-                    "section": "Weaknesses",
-                    "stance": "criticism",
-                    "text": f"The source passage conflicts with deterministic evidence [{claim_id}].",
-                    "claim_id": claim_id,
-                    "references": [claim_id, *verdict["evidence"]],
-                }
-            )
-        else:
+            # A contradicted claim is contradicted BY a specific finding at its
+            # line, and that finding is rendered below with its full expected/
+            # observed detail. A separate opaque "conflicts with evidence" line
+            # would just duplicate it, so skip it here (the claim->finding link
+            # is preserved in the Evidence Trace).
+            continue
+        elif claim.get("type") in {"result", "arithmetic", "hypothesis"}:
+            # Only substantive unverifiable claims (results, arithmetic,
+            # hypotheses) warrant an evidence request. Demoting EVERY unverifiable
+            # prose sentence to a question spams the review with dozens of
+            # identical "provide auditable evidence" lines on any real paper —
+            # unverifiable is the normal state of most prose, not a defect.
             comments.append(
                 {
                     "section": "Weaknesses",

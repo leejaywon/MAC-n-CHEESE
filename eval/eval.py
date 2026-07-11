@@ -61,6 +61,53 @@ def _load_key() -> dict[str, Any]:
     return papers
 
 
+def _evaluate_external() -> dict[str, float | int]:
+    """Robustness smoke test on real papers in eval/external/ (no answer key).
+
+    Purpose is a generalization + crash signal, never a detection score. Each
+    paper runs through the full pipeline; a crash is RECORDED, not raised, so one
+    malformed external paper can never abort the loop's backpressure run. Evidence
+    is a sibling `eval/external/<stem>/` dir when present, else an empty dir —
+    real published papers rarely ship this event's experiments.jsonl ledger.
+    """
+
+    external_dir = EVAL_DIR / "external"
+    papers = sorted(external_dir.glob("*.md")) if external_dir.is_dir() else []
+    if not papers:
+        return {
+            "external_paper_count": 0,
+            "external_no_crash_rate": 1.0,
+            "external_completeness": 1.0,
+            "external_finding_total": 0,
+        }
+    no_crash = 0
+    completeness_values: list[float] = []
+    finding_total = 0
+    with tempfile.TemporaryDirectory(prefix="ralphthon-external-") as out_dir, \
+            tempfile.TemporaryDirectory(prefix="ralphthon-external-ev-") as empty_evidence:
+        for paper in papers:
+            sibling = external_dir / paper.stem
+            evidence_dir = sibling if sibling.is_dir() else Path(empty_evidence)
+            try:
+                state = run_pipeline(paper, evidence_dir, Path(out_dir) / paper.name)
+            except Exception as error:  # noqa: BLE001 — a crash is the signal, not a stop
+                print(f"external: {paper.name} crashed: {error!r}", file=sys.stderr)
+                completeness_values.append(0.0)
+                continue
+            no_crash += 1
+            completeness_values.append(
+                sum(marker in state.review_markdown for marker in REQUIRED_REVIEW_MARKERS)
+                / len(REQUIRED_REVIEW_MARKERS)
+            )
+            finding_total += len(state.mechanical_findings)
+    return {
+        "external_paper_count": len(papers),
+        "external_no_crash_rate": no_crash / len(papers),
+        "external_completeness": sum(completeness_values) / len(completeness_values),
+        "external_finding_total": finding_total,
+    }
+
+
 def _evaluate() -> dict[str, float | int]:
     papers = _load_key()
     expected_total = 0
@@ -126,6 +173,7 @@ def _evaluate() -> dict[str, float | int]:
     )
     injection_resistance = invariant_pairs / len(injection_pairs) if injection_pairs else 1.0
     score = detection_rate - 0.5 * false_positive_rate + 0.1 * completeness
+    external = _evaluate_external()
     return {
         "score": score,
         "detection_rate": detection_rate,
@@ -138,6 +186,7 @@ def _evaluate() -> dict[str, float | int]:
         "expected_flaw_count": expected_total,
         "injection_pair_count": len(injection_pairs),
         "injection_resistance": injection_resistance,
+        **external,
     }
 
 
@@ -186,6 +235,10 @@ def main() -> int:
         f"localization={metrics['localization_rate']:.3f} "
         f"fp={metrics['false_positive_count']} completeness={metrics['completeness']:.3f}",
         f"injection_resistance={metrics['injection_resistance']:.3f}",
+        f"external(papers={metrics['external_paper_count']} "
+        f"no_crash={metrics['external_no_crash_rate']:.3f} "
+        f"completeness={metrics['external_completeness']:.3f} "
+        f"findings={metrics['external_finding_total']})",
         file=sys.stderr,
     )
     print(f"{metrics['score']:.6f}")

@@ -45,9 +45,11 @@ run_review.py <paper.md|pdf> <evidence_dir> --out review.md
                   identical rerun on same hash must yield same verdict labels
 ```
 
-Modes (DeepReview pattern): `--fast` = S1–S3 only (mech report), `--best` = full
-pipeline. Event fallback: if time is short, `--fast` output is still a valid
-evidence-bound review skeleton.
+Modes (`run_review.py --mode`): `audit` (DEFAULT) = the full deterministic
+S1–S6 pipeline above, fully reproducible and injection-proof — this is the
+primary submission. `best` = `audit` plus the optional scientific judgment layer
+(§4c); it is a BONUS and may call a model, so it never gates a submission. If the
+judgment layer is unbuilt or a model is unavailable, `best` output equals `audit`.
 
 ## 4. Mechanical check battery (S3) — the moat
 
@@ -64,27 +66,58 @@ evidence-bound review skeleton.
 
 Each finding: `{check, severity, location, expected, observed, evidence_path}`.
 
-## 4b. Scientific depth requirements (S5 — beyond the audit)
+## 4b. Scientific scaffolding — deterministic (S5, always on)
 
-The audit battery grounds the review; these make it a REVIEW. For each
-hypothesis/claim in the paper, S5 must produce:
+The audit battery grounds the review; these deterministic slots make it read as
+a REVIEW with no model call. Each is computed from ledger coverage or the parsed
+paper, so it is reproducible and cannot hallucinate:
 
-1. **Causal critique**: does the evidence support the causal story, or is
-   there a confound? (e.g., "raising MATRIX_LR changes both peak lr and the
-   lr-schedule integral — which drove the gain?") One named confound per
-   kept-candidate claim when one exists.
-2. **Scope check**: claim breadth vs evidence breadth. n=1 benchmark, single
-   seed, one GPU type → any generalized claim gets a scope-limitation
-   weakness (grounded in the ledger's actual coverage).
-3. **Design critique**: experimental-design quality — single run vs variance,
-   missing ablation, stop-condition bias, baseline representativeness.
-4. **Follow-up**: every substantive Weakness proposes ONE concrete follow-up
-   experiment that would resolve it.
-5. **Positioning**: does the paper situate its hypothesis against known prior
-   work (speedrun lore, schedule literature)? Absence = Presentation weakness.
+1. **Scope check** [deterministic]: claim breadth vs evidence breadth. Read the
+   ledger's actual coverage (# trials, seeds, GPU type, benchmark count). Any
+   generalized claim beyond that coverage gets a scope-limitation weakness that
+   QUOTES the coverage numbers.
+2. **Design critique** [deterministic]: single run vs. reported variance (one
+   ledger row per trial with no repeats → "no variance"), missing confirmation
+   rerun, baseline representativeness — all readable from the ledger.
+3. **Follow-up** [deterministic]: every substantive Weakness gets ONE concrete
+   templated follow-up (e.g., "repeat with ≥3 seeds to establish variance").
+4. **Positioning** [deterministic-lite]: does the paper cite ANY related work?
+   Zero citations in a hypothesis paper → Presentation weakness.
 
-These outputs feed Weaknesses/Questions with scientific substance; the FP rule
-still applies (uncertain critiques go to Questions, phrased as questions).
+The FP rule always applies: uncertain critiques become Questions. The richer,
+judgment-heavy critiques (a NAMED causal confound, real positioning against the
+specific literature, novelty/significance) require reasoning and live in §4c,
+off by default.
+
+## 4c. Judgment layer — optional, `--best` only (the loop builds this)
+
+Default `audit` mode is fully deterministic and is the primary submission.
+`best` mode adds a scientific judgment layer for what machines cannot verify
+(novelty, significance, a named causal confound, positioning against the actual
+literature). It is a BONUS, never a dependency: if unbuilt or the model is
+unavailable, `audit` output stands unchanged.
+
+Mechanism (leverages published prior art directly):
+- **Grounded two-pass** (ReviewGrounder, arXiv 2604.14261): a DRAFT model
+  proposes critique; a GROUND pass maps every sentence to an S3 finding / S4
+  verdict / ledger id. Any quantitative statement is re-checked against S3;
+  ungroundable praise is deleted; ungroundable criticism → Questions. The S3
+  battery IS the tool the grounder calls — same contract as §5's offline pass.
+- **Multi-persona** (DeepReviewer): harsh-theorist / empiricist / reproducibility
+  -cop drafts merged by an AC meta-review. Personas add coverage, not authority;
+  grounding still gates every sentence.
+- **Calibration** (OpenReviewer: LLMs are too positive): the judgment layer may
+  only LOWER scores from the deterministic borderline anchor, never inflate them.
+
+Hard rules for the judgment layer (violating any = revert):
+- Input to any model is the SANITIZED paper text (injection-scan output) only.
+  Hidden instructions never reach the model, so injection resistance is preserved.
+- Temperature 0 + fixed seed; record model id + prompt hash in the freeze block.
+  The S4 verdict-label digest (audit determinism contract) is unaffected —
+  judgment prose is additive and lives in its own section.
+- Quota-aware: ONE bounded model-call budget per review; on any error, fall back
+  to audit output and note it. Never blocks a submission. Shares the loop's Codex
+  quota, so treat it as expensive and gate on confirmed API-key + credit.
 
 ## 5. Scoring calibration
 
@@ -107,7 +140,15 @@ still applies (uncertain critiques go to Questions, phrased as questions).
   the passage), false-positive count, section completeness, injection resistance
   (score unchanged on injected twin), determinism (same input → same verdicts).
 - **Score** = detection_rate − 0.5·FP_rate + 0.1·completeness. Print single number.
-- **Loop rule**: a change is kept only if eval score does not regress. Log every
+- **External robustness sub-metric**: when `eval/external/` holds real papers,
+  eval.py runs the full pipeline on each (no answer key) and reports
+  external_no_crash_rate + external_completeness + external_finding_total. This
+  is a generalization/crash signal, never a detection score, and never gates the
+  primary loop rule.
+- **Loop rule**: a reviewer-CODE change is kept only if the primary detection
+  metric does not regress on existing cases. Eval-set HARDENING (adding a harder
+  TRUE case when a task says so) re-baselines and is never reverted for the
+  induced drop — that drop is the headroom the next iterations climb. Log every
   eval run to W&B offline (`job_type=reviewer-eval`).
 
 ## 7. Constraints (Integrity Gate — hard)

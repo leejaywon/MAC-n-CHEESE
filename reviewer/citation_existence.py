@@ -24,6 +24,14 @@ ARXIV_RE = re.compile(
     r"(?P<id>(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?)",
     re.I,
 )
+# Peer papers routinely cite a bare arXiv id in brackets, e.g. "[2305.14567]",
+# with no "arXiv:" prefix. The month digits (01-12) gate this so an arbitrary
+# "[1234.5678]" is not misread as a citation. A not-found lookup on such an id
+# (e.g. a fabricated "[1901.99999]") is a real, checkable defect on any paper.
+BRACKET_ARXIV_RE = re.compile(
+    r"\[(?:arxiv\s*:\s*)?(?P<id>\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}(?:v\d+)?)\]",
+    re.I,
+)
 S2_URL_RE = re.compile(
     r"semanticscholar\.org/paper/(?:[^\s/)]+/)?(?P<id>[0-9a-f]{40}|CorpusId:\d+)", re.I
 )
@@ -148,6 +156,7 @@ def _citations(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
     for line_number, line in enumerate(_paper_lines(parsed_paper), start=1):
         matches: list[tuple[str, str, str]] = []
         matches.extend(("arxiv", match.group("id"), match.group(0)) for match in ARXIV_RE.finditer(line))
+        matches.extend(("arxiv", match.group("id"), match.group(0)) for match in BRACKET_ARXIV_RE.finditer(line))
         matches.extend(("s2", match.group("id"), match.group(0)) for match in S2_URL_RE.finditer(line))
         matches.extend(("s2", f"CorpusId:{match.group('id')}", match.group(0)) for match in CORPUS_RE.finditer(line))
         matches.extend(

@@ -26,11 +26,14 @@ class ClaimVerdictTests(unittest.TestCase):
         json.dumps(claims)
 
     def test_clean_results_supported_but_hypothesis_remains_unverifiable(self) -> None:
-        state = run_pipeline(
-            ROOT / "eval/papers/clean_val_bpb.md",
-            ROOT / "eval/evidence/clean_val_bpb",
-            Path(tempfile.gettempdir()) / "m4-clean-review.md",
-        )
+        # Fresh TemporaryDirectory (not the shared gettempdir()) so a frozen
+        # artifact from an earlier agent version cannot collide across reruns.
+        with tempfile.TemporaryDirectory() as directory:
+            state = run_pipeline(
+                ROOT / "eval/papers/clean_val_bpb.md",
+                ROOT / "eval/evidence/clean_val_bpb",
+                Path(directory) / "m4-clean-review.md",
+            )
         labels = {claim["id"]: verdict["label"] for claim, verdict in zip(state.claims, state.verdicts)}
         hypothesis = next(claim for claim in state.claims if claim["type"] == "hypothesis")
         table_claims = [claim for claim in state.claims if claim["location"]["table_id"]]

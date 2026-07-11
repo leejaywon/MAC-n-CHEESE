@@ -43,13 +43,25 @@ def _finding(location: dict[str, int], expected: str, observed: str, source: str
     }
 
 
-def check_template_compliance(parsed_paper: dict[str, Any]) -> dict[str, Any]:
+def check_template_compliance(parsed_paper: dict[str, Any], event_format: bool = True) -> dict[str, Any]:
     """Check required headings, explicit page count, and checkbox syntax.
 
     Markdown has no intrinsic rendered page count.  We therefore enforce the
     2--4 page rule only from an explicit declaration or form-feed boundaries;
     otherwise the trace records ``unknown`` instead of inventing a layout.
+
+    This contract is THIS event's Track 1 template. On an arbitrary peer paper
+    (``event_format`` False) demanding these exact sections is a false positive,
+    so the check yields no findings and records that it was not applicable.
+    Presentation/structure feedback on such papers is the judgment layer's job.
     """
+
+    if not event_format:
+        return {
+            "check": "template-compliance",
+            "traces": [{"kind": "required-sections", "applicable": False, "matched": None}],
+            "findings": [],
+        }
 
     text, lines = _source(parsed_paper)
     source_path = str(parsed_paper["source_path"])

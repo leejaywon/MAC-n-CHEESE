@@ -1,2 +1,6 @@
 eval/wandb/
 wandb/
+.cache/
+__pycache__/
+*.py[cod]
+.DS_Store

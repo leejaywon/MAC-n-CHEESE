@@ -1,9 +1,9 @@
 """Deterministic mechanical checks for stage S3.
 
-M2a implements only ledger tracing.  It deliberately traces metric-labelled
-numbers rather than every number in a paper: years, seeds, section numbers,
-and run counts are not experimental result claims merely because they are
-numeric.  Later checks own derived arithmetic and broader claim extraction.
+The checks deliberately require an explicit metric and comparison context.
+Years, seeds, section numbers, and run counts are not experimental claims just
+because they are numeric; ambiguous relationships are left for later claim
+extraction instead of becoming false-positive findings.
 """
 
 from __future__ import annotations
@@ -55,6 +55,7 @@ class LedgerValue:
 
 def _finding(
     *,
+    check: str = "ledger-trace",
     severity: str,
     location: dict[str, Any] | str,
     expected: str,
@@ -62,7 +63,7 @@ def _finding(
     evidence_path: str,
 ) -> dict[str, Any]:
     return {
-        "check": "ledger-trace",
+        "check": check,
         "severity": severity,
         "location": location,
         "expected": expected,
@@ -231,7 +232,10 @@ def _field_matches(metric: str, ledger_field: str) -> bool:
 
 def _trial_context(context: str) -> str | None:
     lowered = context.lower().replace("_", "-")
-    match = re.search(r"\bcandidate[- ]?(\d+)\b", lowered)
+    # Require the canonical hyphen for numbered trials. A permissive
+    # ``candidate 75`` match misreads the first numeric result cell as a trial
+    # suffix when a table row is flattened into context.
+    match = re.search(r"\bcandidate-(\d+)\b", lowered)
     if match:
         return f"candidate-{match.group(1)}"
     if re.search(r"\bwinner[- ]confirmation\b", lowered):
@@ -366,3 +370,228 @@ def check_ledger_trace(parsed_paper: dict[str, Any], evidence_dir: Path) -> dict
         "traces": traces,
         "findings": findings,
     }
+
+
+def _decimal(value: str) -> Decimal | None:
+    try:
+        return Decimal(value)
+    except InvalidOperation:
+        return None
+
+
+def _result_values(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return only metric-labelled table/prose values with trial context."""
+
+    metric_fields = set(DEFAULT_METRIC_FIELDS)
+    values: list[dict[str, Any]] = []
+    for token in parsed_paper.get("numeric_tokens", []):
+        table_metric = _table_metric(parsed_paper, token, metric_fields)
+        source = "table" if table_metric else "prose"
+        metric = table_metric
+        if metric is None and _is_result_prose(parsed_paper, token):
+            metric = _prose_metric(str(token.get("context", "")), token, metric_fields)
+        if metric is None or token.get("kind") == "percentage":
+            continue
+        normalized_metric = _normalized_label(metric)
+        if normalized_metric in DERIVED_LABELS:
+            continue
+        value = _decimal(str(token["normalized"]))
+        if value is None:
+            continue
+        values.append(
+            {
+                "number_id": token["id"],
+                "source": source,
+                "metric": normalized_metric,
+                "trial": _trial_context(_row_context(parsed_paper, token)),
+                "value": value,
+                "display": token["normalized"],
+                "location": token["location"],
+            }
+        )
+    return values
+
+
+def check_internal_consistency(parsed_paper: dict[str, Any]) -> dict[str, Any]:
+    """Compare table and prose values only when metric and trial both agree.
+
+    Requiring an explicit trial prevents unrelated rows or aggregate prose from
+    being compared. Repeated mentions are retained as traces, while only
+    rounding-incompatible pairs become findings.
+    """
+
+    values = _result_values(parsed_paper)
+    table_values = [value for value in values if value["source"] == "table"]
+    prose_values = [value for value in values if value["source"] == "prose"]
+    traces: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+
+    for prose in prose_values:
+        if prose["trial"] is None:
+            continue
+        candidates = [
+            table
+            for table in table_values
+            if table["metric"] == prose["metric"] and table["trial"] == prose["trial"]
+        ]
+        if not candidates:
+            continue
+        matched = any(_numbers_match(prose["display"], float(table["value"])) for table in candidates)
+        trace = {
+            "prose_number_id": prose["number_id"],
+            "metric": prose["metric"],
+            "trial": prose["trial"],
+            "prose_value": prose["display"],
+            "prose_location": prose["location"],
+            "table_values": [str(table["value"]) for table in candidates],
+            "table_locations": [table["location"] for table in candidates],
+            "matched": matched,
+        }
+        traces.append(trace)
+        if not matched:
+            findings.append(
+                _finding(
+                    check="internal-consistency",
+                    severity="high",
+                    location=prose["location"],
+                    expected=(
+                        f"{prose['metric']} for {prose['trial']} to equal table value(s) "
+                        f"{trace['table_values']}"
+                    ),
+                    observed=f"prose reports {prose['display']}",
+                    evidence_path=f"paper table at {trace['table_locations']}",
+                )
+            )
+
+    return {"check": "internal-consistency", "traces": traces, "findings": findings}
+
+
+ARITHMETIC_CLAIM_RE = re.compile(
+    r"\b(?P<label>absolute\s+delta|delta|difference|relative\s+improvement|"
+    r"percentage\s+improvement|percent\s+improvement|improvement|relative\s+change|"
+    r"percentage\s+change|percent\s+change)\b"
+    r"[^\n.!?;]{0,48}?"
+    r"(?:is|was|of|=|:)\s*"
+    r"(?P<value>[+\-\N{MINUS SIGN}]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)(?:[eE][+\-]?\d+)?\s*%?)",
+    re.I,
+)
+
+
+def _table_comparison_pairs(parsed_paper: dict[str, Any]) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
+    values = [value for value in _result_values(parsed_paper) if value["source"] == "table"]
+    pairs: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for metric in sorted({value["metric"] for value in values}):
+        baseline = [value for value in values if value["metric"] == metric and value["trial"] == "baseline"]
+        candidates = [
+            value
+            for value in values
+            if value["metric"] == metric
+            and (
+                value["trial"] == "winner-confirmation"
+                or str(value["trial"] or "").startswith("candidate")
+            )
+        ]
+        # Multiple eligible rows make the operands ambiguous. Do not guess.
+        if len(baseline) == 1 and len(candidates) == 1:
+            pairs[metric] = (baseline[0], candidates[0])
+    return pairs
+
+
+def _lower_is_better(parsed_paper: dict[str, Any], metric: str) -> bool | None:
+    metric_alias = re.escape(metric).replace("_", r"[ _-]")
+    text = "\n".join(str(section.get("content", "")) for section in parsed_paper.get("sections", []))
+    if re.search(rf"(?:lower(?:s|ed|ing)?|reduce[sd]?|decrease[sd]?)\s+`?{metric_alias}`?", text, re.I):
+        return True
+    if re.search(rf"(?:higher|increase[sd]?|raise[sd]?)\s+`?{metric_alias}`?", text, re.I):
+        return False
+    if metric in {"val_bpb", "loss", "perplexity", "elapsed_seconds", "training_seconds", "total_seconds", "peak_vram_mb"}:
+        return True
+    if metric in {"score", "accuracy", "mfu_percent"}:
+        return False
+    return None
+
+
+def check_arithmetic(parsed_paper: dict[str, Any]) -> dict[str, Any]:
+    """Recompute explicit delta/change claims from unambiguous table operands."""
+
+    pairs = _table_comparison_pairs(parsed_paper)
+    source = Path(str(parsed_paper["source_path"]))
+    lines = source.read_text(encoding="utf-8").splitlines()
+    traces: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+
+    for line_number, line in enumerate(lines, start=1):
+        if "|" in line:  # arithmetic claims are prose, not table labels/cells
+            continue
+        for match in ARITHMETIC_CLAIM_RE.finditer(line):
+            raw_value = match.group("value").replace("−", "-").replace(",", "").strip()
+            is_percent = raw_value.endswith("%")
+            display = raw_value.rstrip("%").strip()
+            reported = _decimal(display)
+            if reported is None:
+                continue
+            label = _normalized_label(match.group("label"))
+            is_relative = is_percent or any(word in label for word in ("relative", "percent", "percentage", "improvement"))
+
+            # A single metric pair is safe. With multiple pairs, require the
+            # metric name in the same sentence instead of silently choosing.
+            eligible = list(pairs.items())
+            if len(eligible) > 1:
+                eligible = [item for item in eligible if any(alias in line.lower() for alias in _metric_aliases(item[0]))]
+            if len(eligible) != 1:
+                continue
+            metric, (baseline, candidate) = eligible[0]
+            baseline_value = baseline["value"]
+            candidate_value = candidate["value"]
+            expected = candidate_value - baseline_value
+            formula = "candidate - baseline"
+            if is_relative:
+                if baseline_value == 0:
+                    continue
+                lower = _lower_is_better(parsed_paper, metric)
+                if "improvement" in label and lower is not None:
+                    expected = (baseline_value - candidate_value) / abs(baseline_value) if lower else (candidate_value - baseline_value) / abs(baseline_value)
+                    formula = "improvement / abs(baseline)"
+                else:
+                    expected = (candidate_value - baseline_value) / abs(baseline_value)
+                    formula = "(candidate - baseline) / abs(baseline)"
+                if is_percent:
+                    expected *= Decimal(100)
+
+            matched = _numbers_match(display, float(expected))
+            location = {
+                "line": line_number,
+                "column_start": match.start("value") + 1,
+                "column_end": match.end("value"),
+                "section_id": next(
+                    (section["id"] for section in parsed_paper.get("sections", []) if section["line_start"] <= line_number <= section["line_end"]),
+                    None,
+                ),
+                "table_id": None,
+            }
+            trace = {
+                "metric": metric,
+                "label": label,
+                "reported": display,
+                "expected": str(expected),
+                "formula": formula,
+                "operands": {"baseline": str(baseline_value), "candidate": str(candidate_value)},
+                "location": location,
+                "matched": matched,
+            }
+            traces.append(trace)
+            if not matched:
+                findings.append(
+                    _finding(
+                        check="arithmetic",
+                        severity="high",
+                        location=location,
+                        expected=f"{expected} from {formula} using baseline={baseline_value}, candidate={candidate_value}",
+                        observed=f"paper reports {match.group('value').strip()}",
+                        evidence_path=(
+                            f"paper table locations {baseline['location']} and {candidate['location']}"
+                        ),
+                    )
+                )
+
+    return {"check": "arithmetic", "traces": traces, "findings": findings}

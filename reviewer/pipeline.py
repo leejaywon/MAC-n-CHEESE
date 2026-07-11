@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
 
-from .mechanical_checks import check_ledger_trace
+from .mechanical_checks import check_arithmetic, check_internal_consistency, check_ledger_trace
 from .parser import parse_markdown
 
 
@@ -66,9 +66,14 @@ def _parse_paper(state: ReviewState) -> ReviewState:
 
 
 def _run_mechanical_checks(state: ReviewState) -> ReviewState:
-    ledger_trace = check_ledger_trace(state.parsed_paper, state.evidence_dir)
-    state.mechanical_checks["ledger-trace"] = ledger_trace
-    state.mechanical_findings.extend(ledger_trace["findings"])
+    checks = (
+        check_ledger_trace(state.parsed_paper, state.evidence_dir),
+        check_internal_consistency(state.parsed_paper),
+        check_arithmetic(state.parsed_paper),
+    )
+    for result in checks:
+        state.mechanical_checks[result["check"]] = result
+        state.mechanical_findings.extend(result["findings"])
     return _mark_stage(state, "S3 mech-check")
 
 
@@ -99,24 +104,26 @@ def _compose_scaffold_review(state: ReviewState) -> str:
     ledger_trace = state.mechanical_checks.get("ledger-trace", {})
     trace_count = len(ledger_trace.get("traces", []))
     matched_count = sum(1 for trace in ledger_trace.get("traces", []) if trace["matched"])
-    finding_count = len(ledger_trace.get("findings", []))
+    finding_count = len(state.mechanical_findings)
+    internal = state.mechanical_checks.get("internal-consistency", {})
+    arithmetic = state.mechanical_checks.get("arithmetic", {})
     finding_lines = "\n".join(
-        f"- ledger-trace at {finding['location']}: {finding['observed']}; expected {finding['expected']} "
+        f"- {finding['check']} at {finding['location']}: {finding['observed']}; expected {finding['expected']} "
         f"(evidence: `{finding['evidence_path']}`)."
-        for finding in ledger_trace.get("findings", [])
-    ) or "- No ledger-trace contradictions were proven."
+        for finding in state.mechanical_findings
+    ) or "- No mechanical contradictions were proven."
     return f"""# Track 2 — ICML-Style Review
 
 ## Paper and Evidence Identity
 
-- Review Agent name/version: No Free Lunch Review Agent / `m2a-ledger-trace`
-- `review-agent.md` path/hash: Not frozen at M2a
+- Review Agent name/version: No Free Lunch Review Agent / `m2b-mechanical-checks`
+- `review-agent.md` path/hash: Not frozen at M2b
 - Paper version/hash: `{state.paper_path}` / `sha256:{state.paper_hash}`
 - Evidence bundle reviewed: {_format_evidence_identity(state)}
 
 ## Summary
 
-M2a ledger tracing completed. It found {section_count} sections, {table_count} tables, and {number_count} numeric tokens; {matched_count} of {trace_count} metric-labelled result values matched the experiment ledger, with {finding_count} ledger finding(s). Broader claim analysis is not performed at this milestone.
+M2b mechanical checking completed. It found {section_count} sections, {table_count} tables, and {number_count} numeric tokens; {matched_count} of {trace_count} metric-labelled result values matched the experiment ledger, with {finding_count} total mechanical finding(s). Broader claim analysis is not performed at this milestone.
 
 ## Strengths
 
@@ -128,27 +135,29 @@ M2a ledger tracing completed. It found {section_count} sections, {table_count} t
 
 ## Questions for the Authors
 
-- None generated at M2a; question generation is deferred to S4/S5.
+- None generated at M2b; question generation is deferred to S4/S5.
 
 ## Scores
 
-- Soundness: Not scored — M2a supplies ledger findings, but S4 claim verdicts are not implemented yet.
-- Presentation: Not scored — S1 records structure but M2a does not yet evaluate template compliance.
+- Soundness: Not scored — M2b supplies mechanical findings, but S4 claim verdicts are not implemented yet.
+- Presentation: Not scored — S1 records structure but M2b does not yet evaluate template compliance.
 - Contribution: Not scored — S2 does not yet extract claims, so contribution evidence is unavailable.
-- Overall recommendation: Not scored — M2a findings are not yet grounded into claim verdicts.
-- Confidence: Not scored — no complete claim set is evaluated for verifiability at M2a.
+- Overall recommendation: Not scored — M2b findings are not yet grounded into claim verdicts.
+- Confidence: Not scored — no complete claim set is evaluated for verifiability at M2b.
 
 ## Ethics and Limitations
 
-This M2a output must not be treated as a complete substantive review. It checks direct numeric ledger traceability only and performs no citation, injection, ethics, arithmetic, or evidence-quality checks.
+This M2b output must not be treated as a complete substantive review. It checks ledger traceability, table/prose consistency, and explicit arithmetic claims, but performs no citation, injection, ethics, or broader evidence-quality checks.
 
 ## Evidence Trace
 
 - Pipeline execution: `{stage_trace}`.
 - Frozen paper input: `{state.paper_path}` (`sha256:{state.paper_hash}`).
 - S1 parse inventory: {section_count} sections, {table_count} tables, {number_count} numeric tokens with source locations.
-- S3 ledger-trace: {matched_count}/{trace_count} metric-labelled values matched; {finding_count} finding(s), each with paper location and evidence path.
-- No central paper claims were extracted or evaluated in M2a.
+- S3 ledger-trace: {matched_count}/{trace_count} metric-labelled values matched; {len(ledger_trace.get('findings', []))} finding(s).
+- S3 internal-consistency: {len(internal.get('traces', []))} comparison(s), {len(internal.get('findings', []))} finding(s).
+- S3 arithmetic: {len(arithmetic.get('traces', []))} recomputation(s), {len(arithmetic.get('findings', []))} finding(s).
+- No central paper claims were extracted or evaluated in M2b.
 """
 
 

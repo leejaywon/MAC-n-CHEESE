@@ -127,7 +127,7 @@ cd 2026_07_Ralphthon-track1 && rm -f campaign/cutoff_override && git rm -q --cac
 | 증상                              | 대응                                                                            |
 | --------------------------------- | ------------------------------------------------------------------------------- |
 | 루프가 같은 태스크 반복 실패      | 12:30 전이면 sign-post 추가. 이후면 그냥 둔다 — 다른 태스크로 넘어가게 설계됨   |
-| rate limit (iteration 급감속/429) | API key 계정 전환 후 루프 재시작 (재시작은 harness 조작 아님 — 단 현장 룰 확인) |
+| rate limit / usage limit | **전날 실증: sol-high ~25 iteration에 구독 쿼터 소진, terra도 같은 계정 쿼터.** 3시간 루프 2개는 구독 하나로 불가 → 아침에 크레딧 받으면 `codex login --api-key`를 최우선으로. 크레딧 없으면 팀원 계정에 한 루프 배정. 루프는 연속 실패 3회에 자동 정지하게 해뒀음 |
 | VESSL 잡 폴링 타임아웃            | 잡은 계속 돈다. 다음 iteration이 `vesslctl job show`로 회수 — 설계된 경로       |
 | A100 큐 정체                      | 15:00 컷이 자동으로 candidate 수를 줄인다. baseline+1개+확인런이면 페이퍼 성립  |
 | Track 1 전멸 (크레딧/클러스터)    | Track 2 단독 제출 (공식 Track 2-only 경로). 리뷰 대상 페이퍼는 현장 제공분 사용 |

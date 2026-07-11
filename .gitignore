@@ -3,3 +3,6 @@ vendor/
 wandb/
 ralph.log
 .last_msg_*
+logs/
+.ralph_stop
+vessl-cloud-cookbook/

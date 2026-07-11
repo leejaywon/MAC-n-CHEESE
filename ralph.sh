@@ -30,7 +30,7 @@ for i in $(seq 1 "$MAX_ITER"); do
 
   run_with_timeout codex exec \
     --sandbox workspace-write \
-    --ask-for-approval never \
+    -c approval_policy="\"never\"" \
     -m "$MODEL" \
     -c model_reasoning_effort="\"$EFFORT\"" \
     --output-last-message "logs/last_msg_$i.txt" \

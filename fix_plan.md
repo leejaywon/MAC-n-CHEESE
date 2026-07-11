@@ -128,11 +128,17 @@ event eval stays 1.10; 57 tests green.
 - Ordinal-suffix FP fix: the "1" in "candidate-1" is no longer traced as metric=1.
 
 Remaining (forward):
-- [ ] G1: dedup the opaque "conflicts with deterministic evidence [claim]"
-      weakness when a specific finding already covers the same line.
-- [ ] G2: add 2 generality eval cases (official-template General-path paper with
-      a planted arithmetic/citation error + a dishonest Self-Review) so the
-      backpressure rewards generality, not only event-format detection.
-- [ ] G3: judgment layer (M13–M15) is now the main substance lever for
-      evidence-poor peer papers; PDF input (M-PDF) only if peer papers are not
-      Markdown (they use the Markdown official template, so likely unneeded).
+- [x] G1: deduped the opaque "conflicts with deterministic evidence" weakness —
+      a contradicted claim now renders only the specific finding, not both.
+- [x] G2: added a prose-ratio generality eval pair (clean_prose_ratio +
+      corrupt_prose_ratio) so backpressure covers the general P1b check. (The
+      Self-Review honesty audit is a DERIVED critique kept out of detection/FP
+      accounting by design, so it is covered by tests, not an eval-detection case.)
+- [x] Competitiveness (judging-aligned, from re-read of the event SKILL): the
+      Summary now states an ASSESSMENT, not a claim count ("review-as-summary" is
+      a flagged common mistake); scoring treats a proven contradiction OR a
+      dishonest self-certification as an integrity breach → Soundness 1 / Overall
+      reject, not offset by supported results.
+- [ ] G3: judgment layer (M13–M15) = main remaining substance lever for
+      evidence-poor peer papers; needs Codex API quota. PDF input likely unneeded
+      (peer papers use the Markdown official template).

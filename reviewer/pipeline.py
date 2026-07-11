@@ -309,6 +309,20 @@ def _compose_review(state: ReviewState) -> str:
         f"- {name}: {score['value']}/{score['scale'].split('-')[-1]} — {score['rationale']}"
         for name, score in state.scores.items()
     )
+    # An assessment, not a claim count: the event flags "review-as-summary" as a
+    # common mistake, so the Summary states the verdict the audit supports.
+    overall_value = state.scores.get("Overall recommendation", {}).get("value", "?")
+    sr_dishonest = len(self_review_audit.get("findings", []))
+    proven_issues = len(state.finding_records)
+    summary_anchor = state.claims[0]["id"] if state.claims else "no-extracted-claim"
+    summary_text = (
+        f"This review assesses the paper's claims against its supplied evidence. The "
+        f"deterministic audit proved {label_counts['contradicted']} contradiction(s), "
+        f"{sr_dishonest} dishonest self-certification(s), and {proven_issues} mechanical "
+        f"finding(s) in total; {label_counts['supported']} result claim(s) are evidence-backed "
+        f"and {label_counts['unverifiable']} remain unverifiable. Overall recommendation: "
+        f"{overall_value}/5 [{summary_anchor}]."
+    )
     # `best`-mode judgment layer (§4c) is additive prose. Empty in `audit` mode,
     # so this block renders nothing and audit output is byte-identical.
     judgment_comments = state.judgment.get("comments") if isinstance(state.judgment, dict) else None
@@ -329,7 +343,7 @@ def _compose_review(state: ReviewState) -> str:
 
 ## Summary
 
-The evidence audit extracted {len(state.claims)} claims and labeled {label_counts['supported']} supported, {label_counts['contradicted']} contradicted, and {label_counts['unverifiable']} unverifiable [{state.claims[0]['id'] if state.claims else 'no-extracted-claim'}].
+{summary_text}
 
 ## Strengths
 
@@ -414,7 +428,10 @@ class ReviewPipeline:
             state.draft_comments, state.claims, state.verdicts, state.finding_records
         )
         state.grounded_comments = state.grounding_audit["comments"]
-        state.scores = calibrate_scores(state.claims, state.verdicts, state.finding_records)
+        sr_dishonest = len(state.mechanical_checks.get("self-review-audit", {}).get("findings", []))
+        state.scores = calibrate_scores(
+            state.claims, state.verdicts, state.finding_records, self_review_dishonest=sr_dishonest
+        )
         return _mark_stage(state, "S5 compose")
 
     def run(

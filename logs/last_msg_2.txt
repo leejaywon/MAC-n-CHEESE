@@ -1,3 +1,3 @@
-Implemented M2b: table↔prose consistency and arithmetic checks with localized findings.
-Verification: 14/14 tests passed; eval=14/14.
-Updated `fix_plan.md` and `.commit_msg`; next task is M3.
+M6c complete: injection sanitization, detection, Ethics reporting, and two eval twins added.
+Eval: `1.100000` — 100% detection/localization, 0 false positives, injection resistance `1.000`.
+Updated `fix_plan.md` and `.commit_msg`; M7 remains next.

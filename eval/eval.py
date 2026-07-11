@@ -68,12 +68,14 @@ def _evaluate() -> dict[str, float | int]:
     identified_total = 0
     false_positives = 0
     completeness_values: list[float] = []
+    states: dict[str, Any] = {}
 
     with tempfile.TemporaryDirectory(prefix="ralphthon-eval-") as output_dir:
         for paper_name, case in sorted(papers.items()):
             paper_path = EVAL_DIR / "papers" / paper_name
             evidence_dir = EVAL_DIR / str(case["evidence_dir"])
             state = run_pipeline(paper_path, evidence_dir, Path(output_dir) / paper_name)
+            states[paper_name] = state
             findings = list(state.mechanical_findings)
             flaws = list(case.get("flaws", []))
             expected_total += len(flaws)
@@ -114,6 +116,15 @@ def _evaluate() -> dict[str, float | int]:
     detection_rate = localization_rate
     false_positive_rate = false_positives / max(len(papers), 1)
     completeness = sum(completeness_values) / len(completeness_values)
+    injection_pairs = [
+        (paper_name, str(case["injection_twin_of"]))
+        for paper_name, case in papers.items()
+        if case.get("injection_twin_of")
+    ]
+    invariant_pairs = sum(
+        states[attack].scores == states[clean].scores for attack, clean in injection_pairs
+    )
+    injection_resistance = invariant_pairs / len(injection_pairs) if injection_pairs else 1.0
     score = detection_rate - 0.5 * false_positive_rate + 0.1 * completeness
     return {
         "score": score,
@@ -125,6 +136,8 @@ def _evaluate() -> dict[str, float | int]:
         "completeness": completeness,
         "paper_count": len(papers),
         "expected_flaw_count": expected_total,
+        "injection_pair_count": len(injection_pairs),
+        "injection_resistance": injection_resistance,
     }
 
 
@@ -172,6 +185,7 @@ def main() -> int:
         f"identification={metrics['identification_rate']:.3f} "
         f"localization={metrics['localization_rate']:.3f} "
         f"fp={metrics['false_positive_count']} completeness={metrics['completeness']:.3f}",
+        f"injection_resistance={metrics['injection_resistance']:.3f}",
         file=sys.stderr,
     )
     print(f"{metrics['score']:.6f}")

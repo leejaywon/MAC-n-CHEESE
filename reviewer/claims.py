@@ -12,6 +12,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .injection_scan import sanitize_for_analysis
+
 
 ARITHMETIC_RE = re.compile(
     r"\b(?:delta|difference|relative|percentage|percent)\s+(?:improvement|change)|"
@@ -89,7 +91,9 @@ def extract_claims(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract declarative prose and result-table rows with stable locations."""
 
     source = Path(str(parsed_paper["source_path"]))
-    lines = source.read_text(encoding="utf-8").splitlines()
+    # Hidden paper-authored instructions are DATA for the injection audit, not
+    # claims for S2 or commands for any later stage.
+    lines = sanitize_for_analysis(source.read_text(encoding="utf-8")).splitlines()
     table_by_line: dict[int, dict[str, Any]] = {}
     table_lines: set[int] = set()
     for table in parsed_paper.get("tables", []):

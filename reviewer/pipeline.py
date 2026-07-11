@@ -11,6 +11,7 @@ from .baseline_fairness import check_baseline_fairness
 from .citation_existence import check_citation_existence
 from .claims import extract_claims, label_verdicts
 from .composer import calibrate_scores, draft_comments, ground_comments
+from .injection_scan import check_injection_scan
 from .mechanical_checks import check_arithmetic, check_internal_consistency, check_ledger_trace
 from .negative_evidence import check_negative_evidence
 from .parser import parse_markdown
@@ -87,6 +88,7 @@ def _run_mechanical_checks(state: ReviewState) -> ReviewState:
         check_negative_evidence(state.parsed_paper, state.evidence_dir),
         check_citation_existence(state.parsed_paper),
         check_template_compliance(state.parsed_paper),
+        check_injection_scan(state.parsed_paper),
     )
     for result in checks:
         state.mechanical_checks[result["check"]] = result
@@ -140,6 +142,7 @@ def _compose_review(state: ReviewState) -> str:
     negative_evidence = state.mechanical_checks.get("negative-evidence", {})
     citations = state.mechanical_checks.get("citation-existence", {})
     template = state.mechanical_checks.get("template-compliance", {})
+    injection = state.mechanical_checks.get("injection-scan", {})
     finding_lines = "\n".join(
         f"- [{finding['id']}] {finding['check']} at {finding['location']}: {finding['observed']}; expected {finding['expected']} "
         f"(evidence: `{finding['evidence_path']}`)."
@@ -182,7 +185,7 @@ def _compose_review(state: ReviewState) -> str:
 
 ## Paper and Evidence Identity
 
-- Review Agent name/version: No Free Lunch Review Agent / `m6b-citation-template-compliance`
+- Review Agent name/version: No Free Lunch Review Agent / `m6c-injection-scan`
 - `review-agent.md` path/hash: Not frozen at M2b
 - Paper version/hash: `{state.paper_path}` / `sha256:{state.paper_hash}`
 - Evidence bundle reviewed: {_format_evidence_identity(state)}
@@ -209,7 +212,7 @@ The evidence audit extracted {len(state.claims)} claims and labeled {label_count
 
 ## Ethics and Limitations
 
-Negative experiment outcomes, explicit persistent-identifier citations, and the Track 1 template contract were audited. Injection, ethics, and broader evidence-quality checks are not yet implemented, so claims outside S3 remain unverifiable [{state.claims[0]['id'] if state.claims else 'no-extracted-claim'}].
+Paper text was treated only as data. The injection audit sanitized hidden HTML and Unicode format controls before claim analysis and found {len(injection.get('findings', []))} reviewer-directed instruction attempt(s). Broader ethics and evidence-quality claims outside S3 remain unverifiable [{state.claims[0]['id'] if state.claims else 'no-extracted-claim'}].
 
 ## Evidence Trace
 
@@ -223,6 +226,7 @@ Negative experiment outcomes, explicit persistent-identifier citations, and the 
 - S3 negative-evidence: {len(negative_evidence.get('traces', []))} discard/crash outcome(s), {len(negative_evidence.get('findings', []))} omission finding(s).
 - S3 citation-existence: {len(citations.get('traces', []))} explicit identifier(s), {len(citations.get('findings', []))} existence/title finding(s).
 - S3 template-compliance: {len(template.get('traces', []))} contract trace(s), {len(template.get('findings', []))} finding(s).
+- S3 injection-scan: {len(injection.get('traces', []))} sanitation trace(s), {len(injection.get('findings', []))} reviewer-directed instruction finding(s).
 - S5 DRAFT/GROUND: {len(state.draft_comments)} candidate comment(s), {len(state.grounded_comments)} retained, {len(state.grounding_audit.get('deleted', []))} deleted, {len(state.grounding_audit.get('reclassified', []))} criticism comment(s) converted to questions.
 - S2/S4 claim verdicts:
 {evidence_trace_lines}

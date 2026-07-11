@@ -13,7 +13,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
 - [x] M2a: mech check `ledger-trace` — numeric claims ↔ experiments.jsonl match
 - [x] M2b: mech checks `internal-consistency` (table↔prose diff) + `arithmetic`
       (recompute deltas/percentages)
-- [ ] M3: eval harness `eval/eval.py` + FLAWS-style generator `eval/make_eval_set.py`
+- [x] M3: eval harness `eval/eval.py` + FLAWS-style generator `eval/make_eval_set.py`
       (claim-anchored error injection, answer_key.json), ≥4 corrupted + 2 clean
       papers; prints single score; logs W&B offline run (job_type=reviewer-eval)
 - [ ] M4: S2 claim extraction + S4 verdict labeling (supported/contradicted/
@@ -41,3 +41,4 @@ iter 2 | M1 | eval=3/3 | Parser implementation and tests pass, but M1 remains un
 iter 3 | M1 | eval=3/3 | Verified committed S1 parser and all tests pass; fix_plan commit blocked because the read-only .git mount denied index.lock.
 iter 4 | M2a | eval=8/8 | Metric- and trial-aware ledger tracing now emits deterministic evidence matches and findings with precision-aware rounding and malformed-ledger handling.
 iter 5 | M2b | eval=14/14 | Conservative table-to-prose matching and deterministic delta/percentage recomputation now emit localized, evidence-backed findings.
+iter 6 | M3 | eval=1.100000 | Six-paper claim-anchored eval detects and localizes all four corruptions with zero false positives and logs metrics to W&B offline.

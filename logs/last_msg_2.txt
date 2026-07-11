@@ -1,0 +1,3 @@
+Implemented M2b: table↔prose consistency and arithmetic checks with localized findings.
+Verification: 14/14 tests passed; eval=14/14.
+Updated `fix_plan.md` and `.commit_msg`; next task is M3.

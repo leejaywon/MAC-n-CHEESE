@@ -22,3 +22,4 @@
 
 ## Discovered optimizations
 (agents: append one-liners here)
+- Sandboxed W&B evals need workspace-local cache/config/data paths plus `x_disable_stats=True` to avoid macOS `netstat` monitor crashes.

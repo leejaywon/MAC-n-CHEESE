@@ -1,0 +1,3 @@
+M2a complete: metric/trial-aware ledger tracing with rounding tolerance and malformed-ledger findings.
+Validation: 8/8 tests passed (`eval/eval.py` not yet present).
+Updated `fix_plan.md` and `.commit_msg`.

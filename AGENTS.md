@@ -17,7 +17,7 @@
 - `reviewer/` — pipeline package (S1–S6)
 - `eval/` — papers, answer keys (READ-ONLY except M3/M8), eval.py
 - `submission/` — final artifacts (review-agent.md, review results)
-- `campaign/`, `vessl-cloud-cookbook/` — Track 1 (do not touch from Track 2 loop)
+- Track 1 lives in sibling repo `../2026_07_Ralphthon-track1` (NEVER write there)
 - `vendor/ralphthon-icml` — official rulebook (read-only)
 
 ## Discovered optimizations

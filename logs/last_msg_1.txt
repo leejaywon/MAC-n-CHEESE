@@ -1,3 +1,3 @@
-M2a complete: metric/trial-aware ledger tracing with rounding tolerance and malformed-ledger findings.
-Validation: 8/8 tests passed (`eval/eval.py` not yet present).
-Updated `fix_plan.md` and `.commit_msg`.
+M6b complete: cached citation verification and template-compliance checks implemented.
+Verification: 37 tests passed; eval=1.100000 with 0 false positives.
+Updated `fix_plan.md` and `.commit_msg`; next task is M6c.

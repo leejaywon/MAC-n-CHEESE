@@ -1,0 +1,3 @@
+{"accuracy": 70.0, "status": "keep", "trial": "baseline"}
+{"accuracy": 75.0, "status": "keep", "trial": "candidate-1"}
+{"accuracy": 65.0, "status": "keep", "trial": "winner-confirmation"}

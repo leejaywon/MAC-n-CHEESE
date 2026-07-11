@@ -31,8 +31,10 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
       `submission/review-agent.md` is human-drafted already: VERIFY it matches
       the implemented pipeline (edit only if code diverged; keep bracketed
       runtime fields as brackets)
-- [ ] M8: hill-climb — analyze eval failures, extend eval set (allowed here),
+- [x] M8: hill-climb — analyze eval failures, extend eval set (allowed here),
       improve weakest check. Repeatable task: re-add itself until 15:00.
+- [ ] M9: update stale test_pipeline_exposes_all_m6b_checks expected check
+      set to include the already-implemented injection-scan.
 
 ## Progress Log
 
@@ -50,3 +52,4 @@ iter 9 | M6a | eval=1.100000 | Explicit improvement claims now require a named s
 iter 10 | M6b | eval=1.100000 | Cached timeout-safe arXiv/S2 citation verification and conservative Track 1 template/page/self-review checks now emit localized evidence-bound findings.
 iter 11 | M6c | eval=1.100000 | Hidden HTML and Unicode-obfuscated reviewer instructions are sanitized, localized in Ethics, and rejected with perfect two-pair score invariance.
 iter 12 | M7 | eval=1.100000 | Content-addressed agent/input freeze records now reproduce and guard verdict-label digests, and the human-drafted agent contract matches the implemented pipeline.
+iter 13 | M8 | eval=1.100000 | Expanded eval to 10 papers and made baseline-fairness reject confirmation reruns that contradict a mechanically known improvement direction, with zero new false positives.

@@ -94,6 +94,38 @@ class BaselineFairnessTests(unittest.TestCase):
         self.assertFalse(result["traces"][0]["confirmation_rerun_present"])
         self.assertEqual(len(result["findings"]), 1)
 
+    def test_confirmation_that_regresses_past_baseline_does_not_confirm_claim(self) -> None:
+        ledger = (
+            '{"trial":"baseline","status":"keep","accuracy":70.0}\n'
+            '{"trial":"candidate-1","status":"keep","accuracy":75.0}\n'
+            '{"trial":"winner-confirmation","status":"keep","accuracy":65.0}\n'
+        )
+        result = _check(
+            "# Results\n\nThe candidate improved accuracy over the baseline.\n",
+            ledger,
+        )
+
+        self.assertTrue(result["traces"][0]["confirmation_rerun_present"])
+        self.assertFalse(result["traces"][0]["confirmation_supports_claim"])
+        self.assertFalse(result["traces"][0]["matched"])
+        self.assertEqual(len(result["findings"]), 1)
+        self.assertIn("do not confirm", result["findings"][0]["observed"])
+
+    def test_unknown_metric_direction_does_not_create_speculative_finding(self) -> None:
+        ledger = (
+            '{"trial":"baseline","status":"keep","custom_metric":10.0}\n'
+            '{"trial":"candidate-1","status":"keep","custom_metric":12.0}\n'
+            '{"trial":"winner-confirmation","status":"keep","custom_metric":8.0}\n'
+        )
+        result = _check(
+            "# Results\n\nThe candidate improved custom_metric over the baseline.\n",
+            ledger,
+        )
+
+        self.assertIsNone(result["traces"][0]["claimed_direction"])
+        self.assertIsNone(result["traces"][0]["confirmation_supports_claim"])
+        self.assertEqual(result["findings"], [])
+
     def test_planned_and_negated_language_is_not_flagged(self) -> None:
         paper = (
             "# Research Spec\n\nWe expect the candidate would improve over the baseline.\n"

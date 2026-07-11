@@ -4,6 +4,10 @@
       "evidence_dir": "evidence/clean_accuracy",
       "flaws": []
     },
+    "clean_confirmed_accuracy.md": {
+      "evidence_dir": "evidence/clean_confirmed_accuracy",
+      "flaws": []
+    },
     "clean_val_bpb.md": {
       "evidence_dir": "evidence/clean_val_bpb",
       "flaws": []
@@ -36,6 +40,22 @@
             "internal-consistency"
           ],
           "injected_text": "The candidate-1 achieved accuracy of 74.0.",
+          "location": {
+            "line": 21
+          }
+        }
+      ]
+    },
+    "corrupt_unconfirmed_accuracy.md": {
+      "evidence_dir": "evidence/corrupt_unconfirmed_accuracy",
+      "flaws": [
+        {
+          "claim": "The candidate improved accuracy over the baseline.",
+          "description": "The purported confirmation rerun regresses below the baseline and does not confirm the improvement claim.",
+          "expected_checks": [
+            "baseline-fairness"
+          ],
+          "injected_text": "The candidate improved accuracy over the baseline.",
           "location": {
             "line": 21
           }

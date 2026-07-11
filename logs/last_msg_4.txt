@@ -1,3 +1,3 @@
-Implemented M4: deterministic claim extraction, verdict labeling, and per-claim Evidence Trace generation.
-Verification: 17 tests passed; eval remained 1.100000 with zero false positives.
-Updated `fix_plan.md` and `.commit_msg`; no other task was started.
+M8 complete: confirmation reruns must support the claimed improvement direction.
+Eval: 1.100000; 10 papers, 7/7 flaws localized, zero false positives.
+Focused tests pass; stale injection-scan assertion recorded as M9.

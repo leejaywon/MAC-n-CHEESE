@@ -2,9 +2,9 @@
 
 The check intentionally does not decide whether a metric value is better.  Its
 job is narrower: an improvement claim must identify its baseline, compare
-records on one common metric, and have a successful confirmation rerun in the
-experiment ledger.  Ambiguous prose that merely discusses planned or possible
-improvements is ignored to avoid reviewer false positives.
+records on one common metric, and have a successful confirmation rerun that
+supports the claimed direction. Ambiguous prose that merely discusses planned
+or possible improvements is ignored to avoid reviewer false positives.
 """
 
 from __future__ import annotations
@@ -70,25 +70,26 @@ class LedgerRecord:
     trial: str
     status: str
     metrics: frozenset[str]
+    values: tuple[tuple[str, float], ...]
 
 
 def _normalize(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
 
 
-def _numeric_fields(value: Any, prefix: str = "") -> Iterable[str]:
+def _numeric_values(value: Any, prefix: str = "") -> Iterable[tuple[str, float]]:
     if isinstance(value, dict):
         for key, child in value.items():
             field = f"{prefix}.{key}" if prefix else str(key)
-            yield from _numeric_fields(child, field)
+            yield from _numeric_values(child, field)
     elif isinstance(value, list):
         for index, child in enumerate(value):
-            yield from _numeric_fields(child, f"{prefix}[{index}]")
+            yield from _numeric_values(child, f"{prefix}[{index}]")
     elif not isinstance(value, bool) and isinstance(value, (int, float)):
-        if math.isfinite(float(value)):
-            leaf = _normalize(prefix.rsplit(".", 1)[-1].split("[", 1)[0])
-            if leaf and leaf not in NON_METRIC_FIELDS:
-                yield leaf
+        numeric = float(value)
+        leaf = _normalize(prefix.rsplit(".", 1)[-1].split("[", 1)[0])
+        if math.isfinite(numeric) and leaf and leaf not in NON_METRIC_FIELDS:
+            yield leaf, numeric
 
 
 def _load_records(evidence_dir: Path) -> tuple[list[LedgerRecord], list[str]]:
@@ -109,8 +110,9 @@ def _load_records(evidence_dir: Path) -> tuple[list[LedgerRecord], list[str]]:
                 continue
             trial = str(value.get("trial", value.get("run_type", value.get("role", "")))).strip()
             status = str(value.get("status", "")).strip().lower()
-            metrics = frozenset(_numeric_fields(value))
-            records.append(LedgerRecord(relative, line_number, trial, status, metrics))
+            values = tuple(_numeric_values(value))
+            metrics = frozenset(field for field, _ in values)
+            records.append(LedgerRecord(relative, line_number, trial, status, metrics, values))
     return records, relative_paths
 
 
@@ -178,6 +180,28 @@ def _finding(location: dict[str, Any], expected: str, observed: str, evidence_pa
     }
 
 
+LOWER_IS_BETTER = frozenset(
+    {"val_bpb", "loss", "perplexity", "elapsed_seconds", "training_seconds", "total_seconds", "peak_vram_mb"}
+)
+HIGHER_IS_BETTER = frozenset({"score", "accuracy", "mfu_percent"})
+
+
+def _claimed_direction(sentence: str, metric: str) -> str | None:
+    if re.search(r"\blower\s+than\b", sentence, re.I):
+        return "lower"
+    if re.search(r"\bhigher\s+than\b", sentence, re.I):
+        return "higher"
+    if metric in LOWER_IS_BETTER:
+        return "lower"
+    if metric in HIGHER_IS_BETTER:
+        return "higher"
+    return None
+
+
+def _metric_values(records: list[LedgerRecord], metric: str) -> list[float]:
+    return [value for record in records for field, value in record.values if field == metric]
+
+
 def check_baseline_fairness(parsed_paper: dict[str, Any], evidence_dir: Path) -> dict[str, Any]:
     """Audit explicit improvement claims against baseline and rerun evidence."""
 
@@ -215,6 +239,33 @@ def check_baseline_fairness(parsed_paper: dict[str, Any], evidence_dir: Path) ->
         }
         same_metric = len(eligible_metrics) == 1
         confirmation_present = same_metric and eligible_metrics == confirmation_metrics
+        direction: str | None = None
+        confirmation_supports_claim: bool | None = None
+        baseline_values: list[float] = []
+        candidate_values: list[float] = []
+        confirmation_values: list[float] = []
+        if confirmation_present:
+            metric = next(iter(eligible_metrics))
+            direction = _claimed_direction(sentence, metric)
+            baseline_values = _metric_values(baselines, metric)
+            candidate_values = _metric_values(candidates, metric)
+            confirmation_values = _metric_values(confirmations, metric)
+            if direction is not None and baseline_values and candidate_values and confirmation_values:
+                compare = (lambda value, baseline: value < baseline) if direction == "lower" else (lambda value, baseline: value > baseline)
+                # Multiple records are accepted only when at least one
+                # candidate and every purported confirmation support the same
+                # side of every baseline.
+                candidate_better = any(
+                    compare(candidate, baseline)
+                    for candidate in candidate_values
+                    for baseline in baseline_values
+                )
+                confirmations_better = all(
+                    compare(confirmation, baseline)
+                    for confirmation in confirmation_values
+                    for baseline in baseline_values
+                )
+                confirmation_supports_claim = candidate_better and confirmations_better
 
         trace = {
             "claim": sentence,
@@ -224,11 +275,18 @@ def check_baseline_fairness(parsed_paper: dict[str, Any], evidence_dir: Path) ->
             "comparison_metrics": sorted(eligible_metrics),
             "same_metric": same_metric,
             "confirmation_rerun_present": confirmation_present,
+            "claimed_direction": direction,
+            "confirmation_supports_claim": confirmation_supports_claim,
             "evidence": [
                 {"path": record.path, "line": record.line, "trial": record.trial}
                 for record in baselines + candidates + confirmations
             ],
-            "matched": named_baseline and same_metric and confirmation_present,
+            "matched": (
+                named_baseline
+                and same_metric
+                and confirmation_present
+                and confirmation_supports_claim is not False
+            ),
         }
         traces.append(trace)
 
@@ -262,6 +320,19 @@ def check_baseline_fairness(parsed_paper: dict[str, Any], evidence_dir: Path) ->
                     location,
                     f"a successful confirmation rerun recording the same {metric} metric",
                     "no matching successful confirmation rerun record",
+                    evidence_path,
+                )
+            )
+        elif confirmation_supports_claim is False:
+            metric = next(iter(eligible_metrics))
+            findings.append(
+                _finding(
+                    location,
+                    f"candidate and confirmation {metric} values both {direction} than the baseline",
+                    (
+                        f"baseline={baseline_values}, candidate={candidate_values}, "
+                        f"confirmation={confirmation_values} do not confirm the claimed improvement"
+                    ),
                     evidence_path,
                 )
             )

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .claims import extract_claims, label_verdicts
+from .composer import calibrate_scores, draft_comments, ground_comments
 from .mechanical_checks import check_arithmetic, check_internal_consistency, check_ledger_trace
 from .parser import parse_markdown
 
@@ -38,6 +39,10 @@ class ReviewState:
     finding_records: list[dict[str, Any]] = field(default_factory=list)
     mechanical_checks: dict[str, dict[str, Any]] = field(default_factory=dict)
     mechanical_findings: list[dict[str, Any]] = field(default_factory=list)
+    draft_comments: list[dict[str, Any]] = field(default_factory=list)
+    grounded_comments: list[dict[str, Any]] = field(default_factory=list)
+    grounding_audit: dict[str, Any] = field(default_factory=dict)
+    scores: dict[str, dict[str, Any]] = field(default_factory=dict)
     review_markdown: str = ""
 
 
@@ -110,8 +115,8 @@ def _format_evidence_identity(state: ReviewState) -> str:
     return f"`{state.evidence_dir}`: {entries}"
 
 
-def _compose_scaffold_review(state: ReviewState) -> str:
-    """Return the official review shape with M4 claim-level Evidence Trace."""
+def _compose_review(state: ReviewState) -> str:
+    """Return the official review shape after DRAFT and authoritative GROUND."""
 
     stage_trace = " -> ".join(STAGE_NAMES)
     section_count = len(state.parsed_paper.get("sections", []))
@@ -140,42 +145,59 @@ def _compose_scaffold_review(state: ReviewState) -> str:
         f"{', '.join(f'`{pointer}`' for pointer in verdict_by_claim[claim['id']]['evidence'])}."
         for claim in state.claims
     ) or "- No declarative claims were extracted."
+    comments_by_section: dict[str, list[dict[str, Any]]] = {
+        "Strengths": [],
+        "Weaknesses": [],
+        "Questions for the Authors": [],
+    }
+    for comment in state.grounded_comments:
+        comments_by_section[comment["section"]].append(comment)
+
+    def render_comments(section: str, empty: str) -> str:
+        comments = comments_by_section[section]
+        return "\n".join(f"- {item['text']}" for item in comments) or f"- {empty}"
+
+    strength_lines = render_comments("Strengths", "No evidence-grounded strengths were established.")
+    weakness_lines = render_comments("Weaknesses", "No deterministic contradictions were proven.")
+    question_lines = render_comments(
+        "Questions for the Authors", "No unverified claim generated an evidence request."
+    )
+    score_lines = "\n".join(
+        f"- {name}: {score['value']}/{score['scale'].split('-')[-1]} — {score['rationale']}"
+        for name, score in state.scores.items()
+    )
     return f"""# Track 2 — ICML-Style Review
 
 ## Paper and Evidence Identity
 
-- Review Agent name/version: No Free Lunch Review Agent / `m4-claim-verdicts`
+- Review Agent name/version: No Free Lunch Review Agent / `m5-grounded-composer`
 - `review-agent.md` path/hash: Not frozen at M2b
 - Paper version/hash: `{state.paper_path}` / `sha256:{state.paper_hash}`
 - Evidence bundle reviewed: {_format_evidence_identity(state)}
 
 ## Summary
 
-M4 extracted {len(state.claims)} claims and deterministically labeled {label_counts['supported']} supported, {label_counts['contradicted']} contradicted, and {label_counts['unverifiable']} unverifiable. It found {section_count} sections, {table_count} tables, and {number_count} numeric tokens; {matched_count} of {trace_count} metric-labelled result values matched the experiment ledger, with {finding_count} total mechanical finding(s).
+The evidence audit extracted {len(state.claims)} claims and labeled {label_counts['supported']} supported, {label_counts['contradicted']} contradicted, and {label_counts['unverifiable']} unverifiable [{state.claims[0]['id'] if state.claims else 'no-extracted-claim'}].
 
 ## Strengths
 
-- {label_counts['supported']} claim(s) have direct deterministic S3 support.
+{strength_lines}
 
 ## Weaknesses
 
-{finding_lines}
+{weakness_lines}
 
 ## Questions for the Authors
 
-- Can the authors provide evidence for the {label_counts['unverifiable']} claim(s) currently labeled unverifiable in the Evidence Trace?
+{question_lines}
 
 ## Scores
 
-- Soundness: Not scored — M4 provides claim verdicts, while calibrated scoring is deferred to M5.
-- Presentation: Not scored — template compliance is deferred to M6b.
-- Contribution: Not scored — M4 traces claims but does not judge novelty or significance.
-- Overall recommendation: Not scored — calibrated recommendation rules are deferred to M5.
-- Confidence: Not scored — confidence calibration is deferred to M5.
+{score_lines}
 
 ## Ethics and Limitations
 
-This M4 output must not be treated as a complete substantive review. It adds deterministic claim verdicts to ledger traceability, table/prose consistency, and explicit arithmetic checks, but performs no citation, injection, ethics, or broader evidence-quality checks.
+Citation, injection, ethics, and broader evidence-quality checks are not implemented, so claims outside S3 remain unverifiable [{state.claims[0]['id'] if state.claims else 'no-extracted-claim'}].
 
 ## Evidence Trace
 
@@ -185,6 +207,7 @@ This M4 output must not be treated as a complete substantive review. It adds det
 - S3 ledger-trace: {matched_count}/{trace_count} metric-labelled values matched; {len(ledger_trace.get('findings', []))} finding(s).
 - S3 internal-consistency: {len(internal.get('traces', []))} comparison(s), {len(internal.get('findings', []))} finding(s).
 - S3 arithmetic: {len(arithmetic.get('traces', []))} recomputation(s), {len(arithmetic.get('findings', []))} finding(s).
+- S5 DRAFT/GROUND: {len(state.draft_comments)} candidate comment(s), {len(state.grounded_comments)} retained, {len(state.grounding_audit.get('deleted', []))} deleted, {len(state.grounding_audit.get('reclassified', []))} criticism comment(s) converted to questions.
 - S2/S4 claim verdicts:
 {evidence_trace_lines}
 """
@@ -205,7 +228,13 @@ class ReviewPipeline:
 
     @staticmethod
     def _compose(state: ReviewState) -> ReviewState:
-        state.review_markdown = _compose_scaffold_review(state)
+        state.draft_comments = draft_comments(state.claims, state.verdicts, state.finding_records)
+        state.grounding_audit = ground_comments(
+            state.draft_comments, state.claims, state.verdicts, state.finding_records
+        )
+        state.grounded_comments = state.grounding_audit["comments"]
+        state.scores = calibrate_scores(state.claims, state.verdicts)
+        state.review_markdown = _compose_review(state)
         return _mark_stage(state, "S5 compose")
 
     def run(self, paper_path: Path, evidence_dir: Path, output_path: Path) -> ReviewState:

@@ -18,7 +18,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
       papers; prints single score; logs W&B offline run (job_type=reviewer-eval)
 - [x] M4: S2 claim extraction + S4 verdict labeling (supported/contradicted/
       unverifiable) → Evidence Trace section generation
-- [ ] M5: S5 composer — DRAFT (cheap model) → GROUND (map every sentence to
+- [x] M5: S5 composer — DRAFT (cheap model) → GROUND (map every sentence to
       finding/claim id; ungrounded praise deleted, ungrounded criticism →
       Questions); score calibration rules from spec §5
 - [ ] M6a: mech checks `baseline-fairness` + `negative-evidence`
@@ -43,3 +43,4 @@ iter 4 | M2a | eval=8/8 | Metric- and trial-aware ledger tracing now emits deter
 iter 5 | M2b | eval=14/14 | Conservative table-to-prose matching and deterministic delta/percentage recomputation now emit localized, evidence-backed findings.
 iter 6 | M3 | eval=1.100000 | Six-paper claim-anchored eval detects and localizes all four corruptions with zero false positives and logs metrics to W&B offline.
 iter 7 | M4 | eval=1.100000 | Deterministic claim extraction and evidence-bound verdicts now generate per-claim Evidence Trace entries without eval regression.
+iter 8 | M5 | eval=1.100000 | Offline DRAFT candidates now pass through an authoritative GROUND filter with traceable comments and borderline-first calibrated scores.

@@ -1,0 +1,79 @@
+{
+  "papers": {
+    "clean_accuracy.md": {
+      "evidence_dir": "evidence/clean_accuracy",
+      "flaws": []
+    },
+    "clean_val_bpb.md": {
+      "evidence_dir": "evidence/clean_val_bpb",
+      "flaws": []
+    },
+    "corrupt_fabricated_result.md": {
+      "evidence_dir": "evidence/corrupt_fabricated_result",
+      "flaws": [
+        {
+          "claim": "The candidate-1 achieved loss of 1.50.",
+          "description": "The prose result is absent from the ledger and contradicts its table row.",
+          "expected_checks": [
+            "ledger-trace",
+            "internal-consistency"
+          ],
+          "injected_text": "The candidate-1 achieved loss of 1.40.",
+          "location": {
+            "line": 21
+          }
+        }
+      ]
+    },
+    "corrupt_table_text_mismatch.md": {
+      "evidence_dir": "evidence/corrupt_table_text_mismatch",
+      "flaws": [
+        {
+          "claim": "The candidate-1 achieved accuracy of 75.0.",
+          "description": "The prose claim conflicts with both the result table and frozen evidence.",
+          "expected_checks": [
+            "ledger-trace",
+            "internal-consistency"
+          ],
+          "injected_text": "The candidate-1 achieved accuracy of 74.0.",
+          "location": {
+            "line": 21
+          }
+        }
+      ]
+    },
+    "corrupt_wrong_delta.md": {
+      "evidence_dir": "evidence/corrupt_wrong_delta",
+      "flaws": [
+        {
+          "claim": "The absolute delta is -0.028.",
+          "description": "The reported absolute delta does not equal candidate minus baseline.",
+          "expected_checks": [
+            "arithmetic"
+          ],
+          "injected_text": "The absolute delta is -0.018.",
+          "location": {
+            "line": 21
+          }
+        }
+      ]
+    },
+    "corrupt_wrong_percent.md": {
+      "evidence_dir": "evidence/corrupt_wrong_percent",
+      "flaws": [
+        {
+          "claim": "The relative improvement is 7.14%.",
+          "description": "The reported percentage improvement is not recomputable from the table.",
+          "expected_checks": [
+            "arithmetic"
+          ],
+          "injected_text": "The relative improvement is 17.14%.",
+          "location": {
+            "line": 21
+          }
+        }
+      ]
+    }
+  },
+  "version": 1
+}

@@ -37,3 +37,4 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
 (append: `iter <n> | <task> | eval=<score> | <one-line result>`)
 
 iter 1 | M0 | eval=n/a | S1-S6 skeleton runs end-to-end and writes the complete official review shape with frozen input hashes.
+iter 2 | M1 | eval=3/3 | Parser implementation and tests pass, but M1 remains unchecked because the read-only .git mount denied index.lock and prevented the required commit.

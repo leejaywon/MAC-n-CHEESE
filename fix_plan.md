@@ -21,7 +21,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
 - [x] M5: S5 composer — DRAFT (cheap model) → GROUND (map every sentence to
       finding/claim id; ungrounded praise deleted, ungrounded criticism →
       Questions); score calibration rules from spec §5
-- [ ] M6a: mech checks `baseline-fairness` + `negative-evidence`
+- [x] M6a: mech checks `baseline-fairness` + `negative-evidence`
 - [ ] M6b: mech checks `citation-existence` (arXiv/S2 API, cached) +
       `template-compliance`
 - [ ] M6c: `injection-scan` — sanitize invisible unicode/hidden text, detect
@@ -44,3 +44,4 @@ iter 5 | M2b | eval=14/14 | Conservative table-to-prose matching and determinist
 iter 6 | M3 | eval=1.100000 | Six-paper claim-anchored eval detects and localizes all four corruptions with zero false positives and logs metrics to W&B offline.
 iter 7 | M4 | eval=1.100000 | Deterministic claim extraction and evidence-bound verdicts now generate per-claim Evidence Trace entries without eval regression.
 iter 8 | M5 | eval=1.100000 | Offline DRAFT candidates now pass through an authoritative GROUND filter with traceable comments and borderline-first calibrated scores.
+iter 9 | M6a | eval=1.100000 | Explicit improvement claims now require a named same-metric baseline and confirmation rerun, while undisclosed discard/crash ledger outcomes produce evidence-backed omission findings.

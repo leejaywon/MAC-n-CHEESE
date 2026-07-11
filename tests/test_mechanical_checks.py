@@ -99,7 +99,7 @@ The relative improvement is 7.14%.
         self.assertEqual(result["traces"], [])
         self.assertEqual(result["findings"], [])
 
-    def test_pipeline_exposes_all_three_checks(self) -> None:
+    def test_pipeline_exposes_all_m6a_checks(self) -> None:
         sample = Path(__file__).resolve().parents[1] / "eval" / "papers" / "sample_clean.md"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -114,9 +114,17 @@ The relative improvement is 7.14%.
 
         self.assertEqual(
             set(state.mechanical_checks),
-            {"ledger-trace", "internal-consistency", "arithmetic"},
+            {
+                "ledger-trace",
+                "internal-consistency",
+                "arithmetic",
+                "baseline-fairness",
+                "negative-evidence",
+            },
         )
         self.assertIn("S3 arithmetic: 2 recomputation(s), 0 finding(s)", state.review_markdown)
+        self.assertIn("S3 baseline-fairness:", state.review_markdown)
+        self.assertIn("S3 negative-evidence:", state.review_markdown)
 
 
 if __name__ == "__main__":

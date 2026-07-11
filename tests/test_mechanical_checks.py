@@ -122,6 +122,7 @@ The relative improvement is 7.14%.
                 "negative-evidence",
                 "citation-existence",
                 "template-compliance",
+                "injection-scan",
             },
         )
         self.assertIn("S3 arithmetic: 2 recomputation(s), 0 finding(s)", state.review_markdown)
@@ -129,6 +130,7 @@ The relative improvement is 7.14%.
         self.assertIn("S3 negative-evidence:", state.review_markdown)
         self.assertIn("S3 citation-existence:", state.review_markdown)
         self.assertIn("S3 template-compliance:", state.review_markdown)
+        self.assertIn("S3 injection-scan:", state.review_markdown)
 
 
 if __name__ == "__main__":

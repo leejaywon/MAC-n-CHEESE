@@ -64,6 +64,28 @@ evidence-bound review skeleton.
 
 Each finding: `{check, severity, location, expected, observed, evidence_path}`.
 
+## 4b. Scientific depth requirements (S5 — beyond the audit)
+
+The audit battery grounds the review; these make it a REVIEW. For each
+hypothesis/claim in the paper, S5 must produce:
+
+1. **Causal critique**: does the evidence support the causal story, or is
+   there a confound? (e.g., "raising MATRIX_LR changes both peak lr and the
+   lr-schedule integral — which drove the gain?") One named confound per
+   kept-candidate claim when one exists.
+2. **Scope check**: claim breadth vs evidence breadth. n=1 benchmark, single
+   seed, one GPU type → any generalized claim gets a scope-limitation
+   weakness (grounded in the ledger's actual coverage).
+3. **Design critique**: experimental-design quality — single run vs variance,
+   missing ablation, stop-condition bias, baseline representativeness.
+4. **Follow-up**: every substantive Weakness proposes ONE concrete follow-up
+   experiment that would resolve it.
+5. **Positioning**: does the paper situate its hypothesis against known prior
+   work (speedrun lore, schedule literature)? Absence = Presentation weakness.
+
+These outputs feed Weaknesses/Questions with scientific substance; the FP rule
+still applies (uncertain critiques go to Questions, phrased as questions).
+
 ## 5. Scoring calibration
 
 - Known LLM-reviewer bias: too positive (OpenReviewer finding). Anchor rubric:

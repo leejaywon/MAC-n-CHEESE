@@ -4,7 +4,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
 
 ## Tasks
 
-- [ ] M0: scaffold `reviewer/` package + `run_review.py` walking skeleton —
+- [x] M0: scaffold `reviewer/` package + `run_review.py` walking skeleton —
       takes a paper path + evidence dir, runs S1→S6 as no-op stages, writes a
       dummy review.md with all required template sections. Must run end-to-end.
 - [ ] M1: S1 parser — markdown paper → sections, tables, numeric tokens with
@@ -35,3 +35,5 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
 ## Progress Log
 
 (append: `iter <n> | <task> | eval=<score> | <one-line result>`)
+
+iter 1 | M0 | eval=n/a | S1-S6 skeleton runs end-to-end and writes the complete official review shape with frozen input hashes.

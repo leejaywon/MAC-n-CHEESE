@@ -40,8 +40,19 @@ Mark unsupported or missing evidence explicitly. Do not invent experiments,
 citations, author intent, reviewer consensus, or private participant
 information. Do not edit the frozen paper or silently request new compute.
 
+## Modes
+
+- `--mode audit` (DEFAULT, the submitted artifact): the full deterministic
+  S1–S6 pipeline. No model call, fully reproducible, injection-proof.
+- `--mode best` (optional bonus): `audit` plus a scientific judgment layer that
+  may call a model on the SANITIZED paper text only (temperature 0, fixed seed,
+  calibration may only lower scores). It is additive prose in its own section;
+  it never changes the audit verdict labels and never blocks a submission. If
+  the layer is unbuilt or a model is unavailable, `best` output equals `audit`.
+
 ## Deterministic Output Contract
 
+- The contract below is the `audit`-mode guarantee (the primary submission).
 - The same agent version and frozen input hashes must produce the same ordered
   verdict labels and verdict-label digest on every rerun.
 - Record the agent version, review-agent hash, input hashes, UTC execution

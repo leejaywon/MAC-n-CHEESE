@@ -173,6 +173,26 @@ CASES = (
         expected_checks=("arithmetic",),
         description="The reported percentage improvement is not recomputable from the table.",
     ),
+    # Generality: a self-contained prose ratio ("from A to B, a gain of Z%") that
+    # carries no trial word, so it exercises the general prose-ratio arithmetic
+    # check (P1b) rather than the event's baseline/candidate table pairing.
+    Case(
+        name="clean_prose_ratio",
+        metric="accuracy",
+        baseline="70.0",
+        candidate="75.0",
+        claim="Accuracy rose from 70.0 to 75.0, a relative gain of 7.14%.",
+    ),
+    Case(
+        name="corrupt_prose_ratio",
+        metric="accuracy",
+        baseline="70.0",
+        candidate="75.0",
+        claim="Accuracy rose from 70.0 to 75.0, a relative gain of 7.14%.",
+        replacement="Accuracy rose from 70.0 to 75.0, a relative gain of 17.14%.",
+        expected_checks=("arithmetic",),
+        description="The prose relative gain is not recomputable from the stated from/to values.",
+    ),
     Case(
         name="corrupt_fabricated_result",
         metric="loss",

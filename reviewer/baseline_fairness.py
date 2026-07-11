@@ -206,6 +206,12 @@ def check_baseline_fairness(parsed_paper: dict[str, Any], evidence_dir: Path) ->
     """Audit explicit improvement claims against baseline and rerun evidence."""
 
     records, ledger_paths = _load_records(evidence_dir)
+    if not records:
+        # No experiments.jsonl ledger means this is not an event-format
+        # submission we can audit for baseline fairness. Emitting "no baseline"
+        # or "no common metric" findings against an arbitrary peer paper would be
+        # a false positive, so the check yields nothing rather than misfiring.
+        return {"check": "baseline-fairness", "traces": [], "findings": []}
     available_metrics = set().union(*(record.metrics for record in records)) if records else set()
     baselines = [record for record in records if _is_baseline(record)]
     candidates = [record for record in records if _is_candidate(record)]

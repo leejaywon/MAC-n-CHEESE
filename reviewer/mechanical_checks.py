@@ -278,6 +278,19 @@ def _numbers_match(normalized: str, ledger_value: float) -> bool:
     return abs(paper_value - evidence_value) <= _rounding_tolerance(normalized)
 
 
+def _is_ordinal_suffix(token: dict[str, Any]) -> bool:
+    """True when a number is an identifier's ordinal suffix ("candidate-1", "gpt-4").
+
+    The parser's lookbehind already blocks a digit after a letter ("F1"), but not
+    a digit after a hyphen, so "candidate-1" leaks a bare "1". That digit names a
+    trial, not a measured value, and must never be traced as a metric.
+    """
+
+    context = str(token.get("context", ""))
+    start = int(token.get("location", {}).get("column_start", 1)) - 1  # 0-based
+    return start >= 2 and context[start - 1] in "-–—" and context[start - 2].isalnum()
+
+
 def _row_context(parsed_paper: dict[str, Any], token: dict[str, Any]) -> str:
     table_id = token["location"].get("table_id")
     line = token["location"]["line"]
@@ -307,6 +320,8 @@ def check_ledger_trace(parsed_paper: dict[str, Any], evidence_dir: Path) -> dict
     traces: list[dict[str, Any]] = []
 
     for token in parsed_paper.get("numeric_tokens", []):
+        if _is_ordinal_suffix(token):
+            continue
         table_metric = _table_metric(parsed_paper, token, metric_fields)
         metric = table_metric
         if metric is None and _is_result_prose(parsed_paper, token):
@@ -385,6 +400,8 @@ def _result_values(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
     metric_fields = set(DEFAULT_METRIC_FIELDS)
     values: list[dict[str, Any]] = []
     for token in parsed_paper.get("numeric_tokens", []):
+        if _is_ordinal_suffix(token):
+            continue
         table_metric = _table_metric(parsed_paper, token, metric_fields)
         source = "table" if table_metric else "prose"
         metric = table_metric
@@ -475,6 +492,17 @@ ARITHMETIC_CLAIM_RE = re.compile(
     r"(?P<value>[+\-\N{MINUS SIGN}]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)(?:[eE][+\-]?\d+)?\s*%?)",
     re.I,
 )
+# Self-contained prose ratio: "from A to B, a (relative) gain of Z%". The
+# operands live in the sentence, so this generalizes beyond the event's
+# baseline/candidate table format and fires on arbitrary peer papers.
+FROM_TO_RATIO_RE = re.compile(
+    r"\bfrom\s+(?P<a>\d[\d,]*(?:\.\d+)?)\s*%?\s+to\s+(?P<b>\d[\d,]*(?:\.\d+)?)\s*%?"
+    r"[^.!?\n]{0,80}?"
+    r"\b(?:relative\s+|percentage\s+|percent\s+)?"
+    r"(?P<kind>gain|improvement|increase|reduction|decrease|drop|change)\s+of\s+"
+    r"(?P<z>\d[\d,]*(?:\.\d+)?)\s*%",
+    re.I,
+)
 
 
 def _table_comparison_pairs(parsed_paper: dict[str, Any]) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
@@ -509,6 +537,37 @@ def _lower_is_better(parsed_paper: dict[str, Any], metric: str) -> bool | None:
     if metric in {"score", "accuracy", "mfu_percent"}:
         return False
     return None
+
+
+def _prose_paragraphs(lines: list[str]) -> list[tuple[str, list[int]]]:
+    """Join consecutive prose lines into paragraphs with a per-character line map.
+
+    Claims wrap across physical lines in real papers (and in PDF-extracted text),
+    so matching per physical line misses them. Blank lines and table lines break
+    paragraphs; the char->line map recovers the true source line of any match.
+    """
+
+    paragraphs: list[tuple[str, list[int]]] = []
+    parts: list[str] = []
+    char_lines: list[int] = []
+
+    def flush() -> None:
+        if parts:
+            paragraphs.append(("".join(parts), list(char_lines)))
+            parts.clear()
+            char_lines.clear()
+
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip() or "|" in line:
+            flush()
+            continue
+        if parts:
+            parts.append(" ")
+            char_lines.append(line_number)
+        parts.append(line)
+        char_lines.extend([line_number] * len(line))
+    flush()
+    return paragraphs
 
 
 def check_arithmetic(parsed_paper: dict[str, Any]) -> dict[str, Any]:
@@ -591,6 +650,54 @@ def check_arithmetic(parsed_paper: dict[str, Any]) -> dict[str, Any]:
                         evidence_path=(
                             f"paper table locations {baseline['location']} and {candidate['location']}"
                         ),
+                    )
+                )
+
+    for paragraph, char_lines in _prose_paragraphs(lines):
+        for match in FROM_TO_RATIO_RE.finditer(paragraph):
+            operand_a = _decimal(match.group("a").replace(",", ""))
+            operand_b = _decimal(match.group("b").replace(",", ""))
+            reported_display = match.group("z").replace(",", "")
+            reported = _decimal(reported_display)
+            if operand_a is None or operand_b is None or reported is None or operand_a == 0:
+                continue
+            expected = (abs(operand_b - operand_a) / abs(operand_a)) * Decimal(100)
+            expected_display = expected.quantize(Decimal("0.01"))
+            matched = _numbers_match(reported_display, float(expected))
+            z_index = match.start("z")
+            line_number = char_lines[z_index]
+            line_start = char_lines.index(line_number)
+            location = {
+                "line": line_number,
+                "column_start": z_index - line_start + 1,
+                "column_end": max(z_index - line_start + 1, match.end("z") - line_start),
+                "section_id": next(
+                    (section["id"] for section in parsed_paper.get("sections", []) if section["line_start"] <= line_number <= section["line_end"]),
+                    None,
+                ),
+                "table_id": None,
+            }
+            traces.append(
+                {
+                    "metric": "prose-ratio",
+                    "label": _normalized_label(match.group("kind")),
+                    "reported": reported_display,
+                    "expected": str(expected),
+                    "formula": "100 * abs(to - from) / abs(from)",
+                    "operands": {"from": str(operand_a), "to": str(operand_b)},
+                    "location": location,
+                    "matched": matched,
+                }
+            )
+            if not matched:
+                findings.append(
+                    _finding(
+                        check="arithmetic",
+                        severity="high",
+                        location=location,
+                        expected=f"{expected_display}% from 100*abs(to-from)/abs(from) using from={operand_a}, to={operand_b}",
+                        observed=f"paper reports a {match.group('kind').lower()} of {match.group('z').strip()}%",
+                        evidence_path=f"paper prose at line {line_number}",
                     )
                 )
 

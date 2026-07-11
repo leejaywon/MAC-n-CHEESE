@@ -16,16 +16,26 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("paper", type=Path, help="path to the frozen paper")
     parser.add_argument("evidence_dir", type=Path, help="path to its evidence bundle")
     parser.add_argument("--out", required=True, type=Path, help="review Markdown output path")
+    parser.add_argument(
+        "--mode",
+        choices=("audit", "best"),
+        default="audit",
+        help=(
+            "audit (default): deterministic, reproducible, injection-proof evidence "
+            "audit — the primary submission. best: audit plus the optional scientific "
+            "judgment layer (may call a model; never blocks a submission)."
+        ),
+    )
     return parser
 
 
 def main() -> int:
     args = _parser().parse_args()
     try:
-        state = run_pipeline(args.paper, args.evidence_dir, args.out)
+        state = run_pipeline(args.paper, args.evidence_dir, args.out, mode=args.mode)
     except (FileNotFoundError, NotADirectoryError, RuntimeError, ValueError) as error:
         _parser().error(str(error))
-    print(f"wrote {state.output_path} ({', '.join(state.completed_stages)})")
+    print(f"wrote {state.output_path} [mode={state.mode}] ({', '.join(state.completed_stages)})")
     return 0
 
 

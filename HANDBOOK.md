@@ -125,7 +125,7 @@ PROMPT sign-post 보강 — **루프 시작 후엔 못 고친다.**
 ```bash
 # 시작 직전 필수: 리허설 잔재 제거
 cd 2026_07_Ralphthon-track1 && rm -f campaign/cutoff_override && git rm -q --cached campaign/cutoff_override 2>/dev/null; ls campaign/experiments.jsonl 2>/dev/null && echo "⚠️ mock ledger 남아있음 — logs/로 치울 것"
-# 노트북 A (Track 2): cd 2026_07_Ralphthon && ./ralph.sh PROMPT.md 40
+# 노트북 A (Track 2): cd 2026_07_Ralphthon-track2 && ./ralph.sh PROMPT.md 40
 # 노트북 B (Track 1): cd 2026_07_Ralphthon-track1 && ./ralph.sh PROMPT.md 30   # MOCK 플래그 없이!
 ```
 
@@ -149,7 +149,7 @@ cd 2026_07_Ralphthon-track1 && rm -f campaign/cutoff_override && git rm -q --cac
 잡은 이슈** ⑤가능하면 다른 팀 페이퍼에서 잡은 실제 이슈 1개.
 
 **아침 추가 작업 (스펙 타임 전, 10분)**: Sakana AI-Scientist 공개 예시 논문
-1–2편을 `2026_07_Ralphthon/eval/external/`에 저장 (markdown 변환해서) — 루프의
+1–2편을 `2026_07_Ralphthon-track2/eval/external/`에 저장 (markdown 변환해서) — 루프의
 M11이 외부 일반화 스모크 테스트를 수행함. 자체 evalset 만점보다 강한 데모 재료.
 
 ## 4. 트러블슈팅

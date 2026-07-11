@@ -35,6 +35,21 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
       improve weakest check. Repeatable task: re-add itself until 15:00.
 - [x] M9: update stale test_pipeline_exposes_all_m6b_checks expected check
       set to include the already-implemented injection-scan.
+- [ ] M10: scientific depth (spec §4b) — S5 must emit per-hypothesis causal
+      critique (named confound), claim-scope check vs ledger coverage, design
+      critique (single-run/variance/ablation), one follow-up experiment per
+      substantive weakness, and prior-work positioning check. Add 2 eval
+      papers whose planted flaw is SCIENTIFIC (overclaimed scope, confounded
+      causal claim) — detection must work on those too. Uncertain critiques
+      obey the FP rule (demote to Questions).
+- [ ] M11: external generalization smoke test — run `run_review.py` on every
+      paper in `eval/external/` (real published AI-generated papers placed
+      there by a human; skip task if dir is empty). No answer key: verify no
+      crash + output completeness, and record the 3 most substantive findings
+      in the Progress Log.
+- [ ] M12 (repeatable until 15:00): hill-climb round — analyze eval failures,
+      extend eval set with one harder scientific-flaw case, improve weakest
+      area. Re-add this task after completing it.
 
 ## Progress Log
 

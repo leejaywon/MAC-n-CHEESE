@@ -42,11 +42,17 @@ for i in $(seq 1 "$MAX_ITER"); do
   echo "exit=$code"
   echo "last: $last"
 
-  # 에이전트가 커밋을 깜빡했으면 안전 커밋 (하네스 레포 한정; cookbook fork에는 이 스크립트 쓰지 않음)
+  # 커밋은 바깥 루프 담당 (codex 샌드박스가 .git 쓰기를 차단함).
+  # 에이전트가 .commit_msg에 남긴 메시지를 사용, 없으면 기본 메시지.
   if [ -n "$(git status --porcelain)" ]; then
+    msg="ralph: iter $i (exit=$code)"
+    if [ -f .commit_msg ]; then
+      msg="$(head -n 1 .commit_msg | head -c 200)"
+      rm -f .commit_msg
+    fi
     git add . >/dev/null 2>&1
-    git commit -q -m "ralph: safety commit iter $i (exit=$code)" || true
-    echo "note: safety commit created"
+    git commit -q -m "$msg" || true
+    echo "committed: $msg"
   fi
 
   if grep -q "ALL TASKS COMPLETE" "logs/last_msg_$i.txt" 2>/dev/null; then

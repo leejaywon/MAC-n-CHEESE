@@ -13,15 +13,18 @@ files. Progress lives in files and git, not in your memory.
    Before claiming something doesn't exist, search the codebase first.
 4. Verify: run `source .venv/bin/activate && python eval/eval.py` if it exists
    (else run the task's own test). Record the eval score.
-   - If your change made the eval score WORSE, revert your change
-     (file-scoped git checkout of the files you touched) and write what you
+   - If your change made the eval score WORSE, restore the previous content
+     of the files you touched (re-read them from the last commit via
+     `git show HEAD:<path>` — read-only git commands work) and write what you
      learned into fix_plan.md instead.
 5. Update `fix_plan.md`: check off the task, append one line to the Progress
    Log: `iter <n> | <task> | eval=<score> | <one-line result>`.
    Add any newly discovered bugs as new unchecked tasks (bottom).
-6. Commit: stage ONLY files you touched by explicit path (`git add <paths>`),
-   message: `ralph: <task-id> <short result> (eval=<score>)`.
-7. End your turn immediately after committing. Output a 3-line summary.
+6. The sandbox denies writes to `.git` — do NOT run any git commands (they
+   will fail; don't waste effort retrying). Instead OVERWRITE the file
+   `.commit_msg` with one line: `ralph: <task-id> <short result> (eval=<score>)`.
+   The outer loop commits your changes with that message after you exit.
+7. End your turn. Output a 3-line summary.
    If every task in fix_plan.md is checked, output exactly: ALL TASKS COMPLETE
 
 ## Subagents

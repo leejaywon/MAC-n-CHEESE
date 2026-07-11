@@ -7,7 +7,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
 - [x] M0: scaffold `reviewer/` package + `run_review.py` walking skeleton —
       takes a paper path + evidence dir, runs S1→S6 as no-op stages, writes a
       dummy review.md with all required template sections. Must run end-to-end.
-- [ ] M1: S1 parser — markdown paper → sections, tables, numeric tokens with
+- [x] M1: S1 parser — markdown paper → sections, tables, numeric tokens with
       locations (JSON). Test on `eval/papers/sample_clean.md` (create a minimal
       one from the official track-1 template if none exists).
 - [ ] M2a: mech check `ledger-trace` — numeric claims ↔ experiments.jsonl match
@@ -38,3 +38,4 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
 
 iter 1 | M0 | eval=n/a | S1-S6 skeleton runs end-to-end and writes the complete official review shape with frozen input hashes.
 iter 2 | M1 | eval=3/3 | Parser implementation and tests pass, but M1 remains unchecked because the read-only .git mount denied index.lock and prevented the required commit.
+iter 3 | M1 | eval=3/3 | Verified committed S1 parser and all tests pass; fix_plan commit blocked because the read-only .git mount denied index.lock.

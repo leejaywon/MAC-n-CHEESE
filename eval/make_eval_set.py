@@ -32,6 +32,8 @@ class Case:
     description: str = ""
     injection: str | None = None
     twin_of: str | None = None
+    confirmation: str | None = None
+    invalid_confirmation: bool = False
 
 
 def _paper(case: Case) -> tuple[str, dict[str, object] | None]:
@@ -87,6 +89,19 @@ This small comparison supports no claim beyond the displayed runs.
             "description": case.description,
         }
     if case.replacement is None:
+        if case.invalid_confirmation:
+            line = next(
+                index
+                for index, source_line in enumerate(text.splitlines(), start=1)
+                if case.claim in source_line
+            )
+            return text, {
+                "claim": case.claim,
+                "injected_text": case.claim,
+                "location": {"line": line},
+                "expected_checks": ["baseline-fairness"],
+                "description": case.description,
+            }
         return text, None
     if text.count(case.claim) != 1:
         raise RuntimeError(f"claim anchor is not unique for {case.name}: {case.claim!r}")
@@ -119,6 +134,24 @@ CASES = (
         baseline="70.0",
         candidate="75.0",
         claim="The absolute delta is 5.0 and relative improvement is 7.14%.",
+    ),
+    Case(
+        name="clean_confirmed_accuracy",
+        metric="accuracy",
+        baseline="70.0",
+        candidate="75.0",
+        confirmation="74.5",
+        claim="The candidate improved accuracy over the baseline.",
+    ),
+    Case(
+        name="corrupt_unconfirmed_accuracy",
+        metric="accuracy",
+        baseline="70.0",
+        candidate="75.0",
+        confirmation="65.0",
+        invalid_confirmation=True,
+        claim="The candidate improved accuracy over the baseline.",
+        description="The purported confirmation rerun regresses below the baseline and does not confirm the improvement claim.",
     ),
     Case(
         name="corrupt_wrong_delta",
@@ -186,10 +219,14 @@ CASES = (
 def _write_ledger(case: Case) -> None:
     case_dir = EVIDENCE_DIR / case.name
     case_dir.mkdir(parents=True, exist_ok=True)
-    records = (
+    records = [
         {"trial": "baseline", "status": "keep", case.metric: float(case.baseline)},
         {"trial": "candidate-1", "status": "keep", case.metric: float(case.candidate)},
-    )
+    ]
+    if case.confirmation is not None:
+        records.append(
+            {"trial": "winner-confirmation", "status": "keep", case.metric: float(case.confirmation)}
+        )
     ledger = "".join(json.dumps(record, sort_keys=True) + "\n" for record in records)
     (case_dir / "experiments.jsonl").write_text(ledger, encoding="utf-8")
 
@@ -219,8 +256,14 @@ def main() -> int:
         json.dumps({"version": 1, "papers": answer_key}, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    attack_count = sum(bool(case.replacement or case.injection) for case in CASES)
-    print(f"generated {len(CASES)} papers ({attack_count} corrupted/attacked, 2 clean)")
+    attack_count = sum(
+        bool(case.replacement or case.injection or case.invalid_confirmation)
+        for case in CASES
+    )
+    print(
+        f"generated {len(CASES)} papers "
+        f"({attack_count} corrupted/attacked, {len(CASES) - attack_count} clean)"
+    )
     return 0
 
 

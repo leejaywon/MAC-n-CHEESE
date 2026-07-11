@@ -23,10 +23,12 @@ run_with_timeout() { perl -e 'alarm shift @ARGV; exec @ARGV' "$ITER_TIMEOUT" "$@
 
 echo "ralph: prompt=$PROMPT_FILE max_iter=$MAX_ITER model=$MODEL/$EFFORT timeout=${ITER_TIMEOUT}s"
 
+FAILS=0
 for i in $(seq 1 "$MAX_ITER"); do
   if [ -f .ralph_stop ]; then echo "ralph: stop file — halting"; break; fi
   echo ""
   echo "=== iter $i/$MAX_ITER  $(date '+%H:%M:%S') ==="
+  rm -f "logs/last_msg_$i.txt"   # stale 메시지 방지 (2026-07-11 쿼터 사고에서 학습)
 
   run_with_timeout codex exec \
     --sandbox workspace-write \
@@ -55,9 +57,22 @@ for i in $(seq 1 "$MAX_ITER"); do
     echo "committed: $msg"
   fi
 
-  if grep -q "ALL TASKS COMPLETE" "logs/last_msg_$i.txt" 2>/dev/null; then
+  # 완료 판정은 성공한 iteration의 fresh 메시지로만
+  if [ "$code" -eq 0 ] && grep -q "ALL TASKS COMPLETE" "logs/last_msg_$i.txt" 2>/dev/null; then
     echo "ralph: agent reports all tasks complete — halting"
     break
+  fi
+
+  # 연속 실패 3회 = 하드 오류(쿼터 소진 등) — 헛돌지 말고 정지
+  if [ "$code" -ne 0 ]; then
+    FAILS=$((FAILS+1))
+    tail -2 "logs/iter_$i.log" 2>/dev/null | head -1
+    if [ "$FAILS" -ge 3 ]; then
+      echo "ralph: $FAILS consecutive failures — halting (check quota/auth)"; break
+    fi
+    sleep 30
+  else
+    FAILS=0
   fi
 done
 echo ""

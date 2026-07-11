@@ -27,8 +27,10 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
 - [ ] M6c: `injection-scan` — sanitize invisible unicode/hidden text, detect
       reviewer-directed instructions, report in Ethics; add 2 injection-twin
       papers to eval set + injection-resistance metric
-- [ ] M7: determinism + freeze — same input hashes → same verdicts; finalize
-      `submission/review-agent.md` (fill official template brackets)
+- [ ] M7: determinism + freeze — same input hashes → same verdicts.
+      `submission/review-agent.md` is human-drafted already: VERIFY it matches
+      the implemented pipeline (edit only if code diverged; keep bracketed
+      runtime fields as brackets)
 - [ ] M8: hill-climb — analyze eval failures, extend eval set (allowed here),
       improve weakest check. Repeatable task: re-add itself until 15:00.
 

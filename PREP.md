@@ -18,7 +18,7 @@
 ## 트랙 전환 관련 (질문의 답)
 
 공식 workflow.md 원문: **"Participants may enter Track 1, Track 2, or both."**
-→ 트랙은 락인이 아니라 제출물 단위. Track 1으로 등록했어도 Track 2 제출 가능, "Both"도 공식 경로임.
+→ 트랙은 제출물 단위다(등록 락인 없음). Track 1으로 등록했어도 Track 2 제출 가능, "Both"도 공식 경로임.
 → 그래도 Luma "Contact the Host"로 오늘 밤 확인 메시지 보내둘 것 (등록폼상 트랙 배정이 운영에 쓰일 수 있음).
 → 주의: Track 2는 **Track 1 페이퍼(frozen)를 리뷰**하는 구조. 리뷰 대상은 행사에서 공급됨 (16:30 이후 peer review 세션). "Both"면 자기 페이퍼 리뷰.
 
@@ -74,5 +74,5 @@
 ## 과거 Ralphthon 프로젝트에서 배운 것
 
 - 과거 에디션(서울 #1·#2, SF, SG)은 전부 **제품 해커톤** (예: GhostView, DigestAnything, houseops IP캠 에이전트, SG standup-agent). 이번 ICML 에디션은 최초의 연구 테마 — 직접 참고할 전례 없음. 대신 공식 플러그인이 규격을 못박아줌.
-- 우승팀 공통점: ① 하네스를 오픈소스 수준으로 정성껏 (서울 1등 Ouroboros, 2등 oh-my-claude-code) ② 100% 자율 실행 입증 (git 히스토리) ③ 명확한 스토리. 코딩량이 아니라 **하네스 설계**가 승부처.
+- 우승팀 공통점: ① 하네스를 오픈소스 수준으로 정성껏 (서울 1등 Ouroboros, 2등 oh-my-claude-code) ② 100% 자율 실행 입증 (git 히스토리) ③ 명확한 스토리. 승부처는 **하네스 설계**다.
 - 도구 분포: Codex 5팀 / Claude Code 2팀 (서울 #2). 이번엔 공식 플러그인이 Codex 전제 → Codex 권장.

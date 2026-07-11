@@ -17,8 +17,9 @@ ITER_TIMEOUT="${RALPH_TIMEOUT:-1500}"
 mkdir -p logs
 rm -f .ralph_stop
 
-TIMEOUT_CMD=""
-command -v gtimeout >/dev/null 2>&1 && TIMEOUT_CMD="gtimeout $ITER_TIMEOUT"
+# 의존성 없는 타임아웃: alarm(2)은 exec를 넘어 살아남고, SIGALRM 기본 동작이 프로세스 종료.
+# macOS 기본 perl만 사용 — brew/coreutils 불필요. 타임아웃 시 exit code 142(=128+SIGALRM).
+run_with_timeout() { perl -e 'alarm shift @ARGV; exec @ARGV' "$ITER_TIMEOUT" "$@"; }
 
 echo "ralph: prompt=$PROMPT_FILE max_iter=$MAX_ITER model=$MODEL/$EFFORT timeout=${ITER_TIMEOUT}s"
 
@@ -27,7 +28,7 @@ for i in $(seq 1 "$MAX_ITER"); do
   echo ""
   echo "=== iter $i/$MAX_ITER  $(date '+%H:%M:%S') ==="
 
-  $TIMEOUT_CMD codex exec \
+  run_with_timeout codex exec \
     --sandbox workspace-write \
     --ask-for-approval never \
     -m "$MODEL" \

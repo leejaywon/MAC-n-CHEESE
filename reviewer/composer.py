@@ -21,6 +21,20 @@ SCORE_SCALES = {
 }
 
 
+def normalize_overall(
+    soundness: int, presentation: int, contribution: int, headline_supported: bool
+) -> int:
+    """Map the three 1-4 sub-scores onto the 1-5 recommendation scale, lifted a
+    step when headline results are evidence-verified. Shared by the deterministic
+    scorer and the best-mode re-normalization so Overall always tracks the subs."""
+
+    sub_mean = (soundness + presentation + contribution) / 3.0
+    base = 1.0 + (sub_mean - 1.0) * (4.0 / 3.0)  # [1,4] -> [1,5]
+    if headline_supported:
+        base += 1.0
+    return max(1, min(5, round(base)))
+
+
 def draft_comments(
     claims: list[dict[str, Any]],
     verdicts: list[dict[str, Any]],
@@ -292,11 +306,7 @@ def calibrate_scores(
         # lifted a step when headline results are actually evidence-verified. This
         # keeps Overall CONSISTENT with Soundness/Presentation/Contribution instead
         # of drifting from them.
-        sub_mean = (soundness + presentation + contribution) / 3.0
-        base = 1.0 + (sub_mean - 1.0) * (4.0 / 3.0)  # map [1,4] -> [1,5]
-        if headline_supported:
-            base += 1.0
-        overall = max(1, min(5, round(base)))
+        overall = normalize_overall(soundness, presentation, contribution, bool(headline_supported))
         overall_anchor = supported_anchor if headline_supported else anchor
         overall_reason = (
             f"Normalized from Soundness {soundness}/4, Presentation {presentation}/4, Contribution "

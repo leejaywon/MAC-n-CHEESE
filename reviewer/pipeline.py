@@ -14,7 +14,7 @@ from typing import Any, Callable
 from .baseline_fairness import check_baseline_fairness
 from .citation_existence import check_citation_existence
 from .claims import extract_claims, label_verdicts
-from .composer import calibrate_scores, draft_comments, ground_comments
+from .composer import calibrate_scores, draft_comments, ground_comments, normalize_overall
 from .injection_scan import check_injection_scan, sanitize_for_analysis
 from .mechanical_checks import check_arithmetic, check_internal_consistency, check_ledger_trace
 from .model_critique import critique as _model_critique
@@ -665,6 +665,25 @@ def _apply_calibration(state: ReviewState, calibration: dict[str, Any], floor: i
             score["value"] = new_value
             score["rationale"] = (
                 f"{score['rationale']} Best-mode calibration lowered this to {new_value}: {reason}"
+            )
+
+    # Keep Overall consistent with any lowered sub-scores by re-normalizing from
+    # them — lower-only, so best-mode never raises the recommendation.
+    overall = state.scores.get("Overall recommendation")
+    subs = [state.scores.get(name) for name in ("Soundness", "Presentation", "Contribution")]
+    if overall and all(subs):
+        verdict_label = {verdict["claim_id"]: verdict["label"] for verdict in state.verdicts}
+        headline_supported = any(
+            verdict_label.get(claim["id"]) == "supported" and claim.get("type") in {"result", "arithmetic"}
+            for claim in state.claims
+        )
+        renormalized = normalize_overall(
+            subs[0]["value"], subs[1]["value"], subs[2]["value"], headline_supported
+        )
+        if renormalized < overall["value"]:
+            overall["value"] = renormalized
+            overall["rationale"] += (
+                f" Best-mode calibration lowered this to {renormalized}: re-normalized after a sub-score dropped."
             )
 
 

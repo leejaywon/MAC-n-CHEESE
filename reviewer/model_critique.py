@@ -46,7 +46,12 @@ SYSTEM_PROMPT = (
     "allow-list in each item's 'grounding'; (2) if a criticism cannot be grounded "
     "in a provided id, make it a 'question', not a 'weakness'; (3) never state a "
     "'strength' without grounding; (4) score calibration may only LOWER the "
-    "provided anchors, never raise them; (5) output STRICT JSON only, no prose."
+    "provided anchors, never raise them; (5) output STRICT JSON only, no prose; "
+    "(6) be SPECIFIC to THIS paper — name its actual method, dataset, or numbers. "
+    "Do NOT emit generic reviewer boilerplate ('lacks statistical analysis', 'no "
+    "ablations', 'insufficient baselines', 'no seeds/variance') unless the paper's "
+    "own text supports it. Prefer FEWER, specific, grounded items over filler; if "
+    "you cannot form a specific grounded critique, return an empty items list."
 )
 
 

@@ -286,18 +286,24 @@ def calibrate_scores(
             f"A proven integrity breach ({breach_count} issue(s)) drives a reject recommendation; "
             f"supported results do not offset it [{contradicted_anchor}]."
         )
-    elif headline_supported and clean_run and situated_novelty and strong_support:
-        overall = 5
-        overall_reason = (
-            f"Multiple supported headline results, a situated contribution, and no proven finding "
-            f"support a strong accept [{supported_anchor}]."
-        )
-    elif headline_supported:
-        overall = 4
-        overall_reason = f"A supported headline result with no proven contradiction supports acceptance [{supported_anchor}]."
     else:
-        overall = 3
-        overall_reason = f"The recommendation remains borderline without a supported headline claim [{anchor}]."
+        # Normalize: the holistic recommendation follows the three sub-dimension
+        # scores (each on 1-4) mapped onto the 1-5 recommendation scale, then
+        # lifted a step when headline results are actually evidence-verified. This
+        # keeps Overall CONSISTENT with Soundness/Presentation/Contribution instead
+        # of drifting from them.
+        sub_mean = (soundness + presentation + contribution) / 3.0
+        base = 1.0 + (sub_mean - 1.0) * (4.0 / 3.0)  # map [1,4] -> [1,5]
+        if headline_supported:
+            base += 1.0
+        overall = max(1, min(5, round(base)))
+        overall_anchor = supported_anchor if headline_supported else anchor
+        overall_reason = (
+            f"Normalized from Soundness {soundness}/4, Presentation {presentation}/4, Contribution "
+            f"{contribution}/4"
+            + (" with evidence-verified headline results" if headline_supported else "")
+            + f" [{overall_anchor}]."
+        )
     overall = max(1, min(5, overall))
 
     # Confidence is the reviewer's CERTAINTY in this review, driven by how much of

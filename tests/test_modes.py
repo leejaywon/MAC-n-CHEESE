@@ -108,10 +108,10 @@ class ModeTests(unittest.TestCase):
         def fake_model(*, sanitized_paper, grounding, anchor_scores, api_key, **kwargs):
             return {
                 "comments": [{"stance": "weakness", "text": "Weakness — Single-seed results lack variance. [claim-001]"}],
-                # Overall 3->2 is a permitted lowering; Soundness 2->1 must be
+                # Overall 4->3 is a permitted lowering; Soundness 3->1 must be
                 # clamped to the floor (2) because no defect was proven.
                 "calibration": {
-                    "Overall recommendation": {"value": 2, "reason": "insufficient empirical rigor"},
+                    "Overall recommendation": {"value": 3, "reason": "insufficient empirical rigor"},
                     "Soundness": {"value": 1, "reason": "attempted floor with no proven defect"},
                 },
                 "model": "gpt-test",
@@ -127,7 +127,8 @@ class ModeTests(unittest.TestCase):
                 root = Path(directory)
                 paper = root / "peer.md"
                 paper.write_text(
-                    "# Novel Method\n\n## Method\n\nWe propose a novel method that outperforms all baselines.\n",
+                    "# Novel Method\n\n## Related Work\n\nWe build on [1] and [2].\n\n## Method\n\n"
+                    "We propose a novel architecture. It reports strong accuracy on the benchmarks.\n",
                     encoding="utf-8",
                 )
                 evidence = root / "ev"
@@ -142,7 +143,7 @@ class ModeTests(unittest.TestCase):
         self.assertIn("Single-seed results lack variance", markdown)      # model comment
         self.assertIn("arXiv:1706.03762", markdown)                        # retrieval comment
         self.assertIn("Model critique: `gpt-test`", markdown)              # provenance
-        self.assertEqual(state.scores["Overall recommendation"]["value"], 2)  # 3 -> 2 within the floor
+        self.assertEqual(state.scores["Overall recommendation"]["value"], 3)  # 4 -> 3 within the floor
         self.assertEqual(state.scores["Soundness"]["value"], 2)            # 1 clamped to floor 2 (no proven defect)
         self.assertIn("calibration lowered", markdown.lower())
 

@@ -83,6 +83,32 @@ The absolute delta is -0.40 and relative improvement is 20.0%.
         self.assertEqual({item["check"] for item in result["findings"]}, {"arithmetic"})
         self.assertEqual({item["location"]["line"] for item in result["findings"]}, {12})
 
+    def test_mean_of_repeated_runs_is_computed_before_delta(self) -> None:
+        # A direct row pairing is ambiguous here. The explicit averaging cue
+        # makes group means (71 and 75), and therefore their delta (4), provable.
+        text = """# Results
+
+| Trial | accuracy |
+|---|---:|
+| baseline | 70.0 |
+| baseline | 72.0 |
+| candidate-1 | 74.0 |
+| candidate-1 | 76.0 |
+
+Averaging the two runs per system, the absolute delta is 5.0.
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            result = check_arithmetic(_parse(text, Path(directory)))
+
+        self.assertEqual(len(result["traces"]), 1)
+        self.assertEqual(len(result["findings"]), 1)
+        self.assertEqual(result["findings"][0]["location"]["line"], 10)
+        self.assertEqual(result["traces"][0]["expected"], "4.0")
+        self.assertEqual(
+            result["traces"][0]["formula"],
+            "mean(candidate runs) - mean(baseline runs)",
+        )
+
     def test_ambiguous_multiple_metrics_are_not_guessed(self) -> None:
         text = """# Results
 

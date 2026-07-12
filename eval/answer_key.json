@@ -33,6 +33,22 @@
         }
       ]
     },
+    "corrupt_mean_then_delta.md": {
+      "evidence_dir": "evidence/corrupt_mean_then_delta",
+      "flaws": [
+        {
+          "claim": "Averaging the two runs per system, the absolute delta is 4.0.",
+          "description": "The reported delta does not equal the candidate-run mean minus the baseline-run mean.",
+          "expected_checks": [
+            "arithmetic"
+          ],
+          "injected_text": "Averaging the two runs per system, the absolute delta is 5.0.",
+          "location": {
+            "line": 23
+          }
+        }
+      ]
+    },
     "corrupt_prose_ratio.md": {
       "evidence_dir": "evidence/corrupt_prose_ratio",
       "flaws": [

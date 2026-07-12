@@ -1,1 +1,3 @@
-ALL TASKS COMPLETE
+M10a complete: added and detected a mean-of-runs delta corruption.
+Eval: 1.100000; detection/localization 1.000, FP 0, completeness 1.000.
+Focused tests passed; `fix_plan.md` and `.commit_msg` updated.

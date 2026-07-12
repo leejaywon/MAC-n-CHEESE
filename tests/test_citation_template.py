@@ -81,6 +81,22 @@ class CitationExistenceTests(unittest.TestCase):
         self.assertEqual(result["findings"], [])
         self.assertEqual(result["traces"][0]["status"], "unavailable")
 
+    def test_truncated_read_does_not_crash_the_audit(self) -> None:
+        # http.client.IncompleteRead (server closed the connection early) is NOT
+        # an OSError. This lookup runs in the deterministic AUDIT path, so an
+        # uncaught one would crash the primary submission on a flaky network.
+        import http.client
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parsed = _parse(root, "# References\n\narXiv:1706.03762\n")
+            result = check_citation_existence(
+                parsed, root / "cache", lambda _: (_ for _ in ()).throw(http.client.IncompleteRead(b""))
+            )
+
+        self.assertEqual(result["findings"], [])
+        self.assertEqual(result["traces"][0]["status"], "unavailable")
+
 
 class TemplateComplianceTests(unittest.TestCase):
     def test_compact_paper_core_contract_passes_without_guessed_pages(self) -> None:

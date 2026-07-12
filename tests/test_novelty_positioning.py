@@ -128,6 +128,35 @@ class NoveltyPositioningTests(unittest.TestCase):
         self.assertEqual(result["retrieved"], [])
         self.assertEqual(result["questions"], [])
 
+    def test_truncated_read_degrades_to_no_retrieval(self) -> None:
+        # A server closing the connection early raises http.client.IncompleteRead,
+        # which is NOT an OSError; it must still degrade, never crash.
+        import http.client
+
+        def truncated_fetch(url: str) -> bytes:
+            raise http.client.IncompleteRead(b"partial")
+
+        result = check_novelty_positioning(self.parsed, cache_dir=self.cache, fetch=truncated_fetch)
+        self.assertEqual(result["retrieved"], [])
+        self.assertEqual(result["questions"], [])
+
+    def test_arxiv_doi_citation_counts_as_cited(self) -> None:
+        # A paper citing a work by its official arXiv DOI must not be told the work
+        # "is not cited or discussed".
+        directory = Path(tempfile.mkdtemp(prefix="ralphthon-novelty-doi-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        (directory / "paper.md").write_text(
+            "# Sparse Attention for Efficient Language Modeling\n\n## Abstract\n\n"
+            "We study sparse attention in transformer models for language modeling. Our novel\n"
+            "method improves efficiency. We build on doi:10.48550/arXiv.2004.05150 for context.\n",
+            encoding="utf-8",
+        )
+        parsed = parse_markdown(directory / "paper.md")
+        result = check_novelty_positioning(parsed, cache_dir=directory / "cache", fetch=lambda url: SEARCH_FEED)
+        longformer = next(trace for trace in result["traces"] if trace["id"] == "2004.05150")
+        self.assertTrue(longformer["already_cited"])
+        self.assertFalse(any("2004.05150" in question["text"] for question in result["questions"]))
+
 
 if __name__ == "__main__":
     unittest.main()

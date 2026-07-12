@@ -108,7 +108,12 @@ class ModeTests(unittest.TestCase):
         def fake_model(*, sanitized_paper, grounding, anchor_scores, api_key, **kwargs):
             return {
                 "comments": [{"stance": "weakness", "text": "Weakness — Single-seed results lack variance. [claim-001]"}],
-                "calibration": {"Soundness": {"value": 1, "reason": "headline unproven under variance"}},
+                # Overall 3->2 is a permitted lowering; Soundness 2->1 must be
+                # clamped to the floor (2) because no defect was proven.
+                "calibration": {
+                    "Overall recommendation": {"value": 2, "reason": "insufficient empirical rigor"},
+                    "Soundness": {"value": 1, "reason": "attempted floor with no proven defect"},
+                },
                 "model": "gpt-test",
                 "prompt_sha256": "deadbeef" * 8,
                 "ok": True,
@@ -137,7 +142,8 @@ class ModeTests(unittest.TestCase):
         self.assertIn("Single-seed results lack variance", markdown)      # model comment
         self.assertIn("arXiv:1706.03762", markdown)                        # retrieval comment
         self.assertIn("Model critique: `gpt-test`", markdown)              # provenance
-        self.assertEqual(state.scores["Soundness"]["value"], 1)            # calibration lowered 2 -> 1
+        self.assertEqual(state.scores["Overall recommendation"]["value"], 2)  # 3 -> 2 within the floor
+        self.assertEqual(state.scores["Soundness"]["value"], 2)            # 1 clamped to floor 2 (no proven defect)
         self.assertIn("calibration lowered", markdown.lower())
 
 

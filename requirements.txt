@@ -1,1 +1,2 @@
 wandb==0.26.1
+pymupdf4llm>=0.0.17

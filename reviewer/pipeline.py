@@ -496,8 +496,14 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
         }
         api_key = os.environ.get("OPENAI_API_KEY")
         if api_key:
+            verdict_label = {verdict["claim_id"]: verdict["label"] for verdict in state.verdicts}
+            finding_ids = [record["id"] for record in state.finding_records]
+            contradicted_ids = [cid for cid, label in verdict_label.items() if label == "contradicted"]
+            supported_ids = [cid for cid, label in verdict_label.items() if label == "supported"]
             grounding = {
-                "finding_ids": [record["id"] for record in state.finding_records],
+                "finding_ids": finding_ids,
+                "contradicted_claim_ids": contradicted_ids,
+                "supported_claim_ids": supported_ids,
                 "claim_ids": [claim["id"] for claim in state.claims],
                 "arxiv_ids": [f"arxiv:{trace['id']}" for trace in retrieval.get("traces", [])],
             }
@@ -510,7 +516,11 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
                 api_key=api_key,
             )
             comments.extend(item["text"] for item in model_result.get("comments", []))
-            _apply_calibration(state, model_result.get("calibration", {}))
+            # Without a proven defect (a finding or a contradiction), the model may
+            # nudge a score down but never floor it: a paper with zero proven
+            # problems must not be driven to the minimum on an ungrounded opinion.
+            score_floor = 1 if (finding_ids or contradicted_ids) else 2
+            _apply_calibration(state, model_result.get("calibration", {}), score_floor)
             judgment["model"] = model_result.get("model")
             judgment["prompt_sha256"] = model_result.get("prompt_sha256")
             judgment["model_ok"] = model_result.get("ok", False)
@@ -521,12 +531,14 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
     return state
 
 
-def _apply_calibration(state: ReviewState, calibration: dict[str, Any]) -> None:
+def _apply_calibration(state: ReviewState, calibration: dict[str, Any], floor: int = 1) -> None:
     """Lower deterministic scores per the model's calibration; never raise.
 
     Runs after the S6 freeze in `best` mode only. It touches ``state.scores``,
     which is not part of the frozen verdict-label digest, so the audit
-    determinism contract is untouched.
+    determinism contract is untouched. ``floor`` bounds how far a dimension may be
+    lowered: it is 1 when a defect is actually proven, but 2 (borderline) when the
+    critique rests on judgment alone, so an unproven opinion cannot floor a score.
     """
 
     for dimension, adjustment in (calibration.items() if isinstance(calibration, dict) else []):
@@ -534,7 +546,11 @@ def _apply_calibration(state: ReviewState, calibration: dict[str, Any]) -> None:
         if not score or not isinstance(adjustment, dict):
             continue
         new_value = adjustment.get("value")
-        if isinstance(new_value, int) and new_value < score["value"]:
+        # bool is an int subclass; reject it so a stray True cannot become "1/4".
+        if isinstance(new_value, bool) or not isinstance(new_value, int):
+            continue
+        new_value = max(new_value, floor)
+        if new_value < score["value"]:
             reason = adjustment.get("reason") or "best-mode multi-persona calibration."
             score["value"] = new_value
             score["rationale"] = (

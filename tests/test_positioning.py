@@ -99,6 +99,42 @@ class PositioningCheckTests(unittest.TestCase):
         result = check_positioning(parsed)
         self.assertEqual(result["findings"], [])
 
+    def test_incidental_claim_vocabulary_is_not_an_overclaim(self) -> None:
+        # Task names and ordinary verbs contain "novel"/"beats"/"exceeds"/"first
+        # to" — none is a novelty/superiority CLAIM, so no Weakness may fire.
+        for sentence in (
+            "We evaluate our system on novel view synthesis.",
+            "The benchmark targets novel class discovery in images.",
+            "The model predicts musical beats in each audio clip.",
+            "When the batch is large the runtime exceeds the memory budget.",
+            "We copy activations from the first to fourth layer of the network.",
+            "We plan to outperform the baseline in future work.",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertEqual(check_positioning(_parse(f"# R\n\n{sentence}\n"))["findings"], [])
+
+    def test_hedged_real_overclaim_is_still_caught(self) -> None:
+        # A stray hedge word ("would like", "potential", "hope to extend") must not
+        # suppress a genuine unsituated SOTA/superiority claim.
+        for sentence in (
+            "We would like to note our method is state-of-the-art on every benchmark.",
+            "Our approach outperforms all prior methods and has great potential.",
+            "Our method is superior to all prior systems, and we hope to extend it further.",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertEqual(len(check_positioning(_parse(f"# R\n\n{sentence}\n"))["findings"]), 1)
+
+    def test_square_bracket_author_year_counts_as_positioning(self) -> None:
+        # The ACL Anthology / ICLR / NeurIPS "[Author, Year]" style must register,
+        # so a well-cited paper is never falsely called unpositioned.
+        parsed = _parse(
+            "# A New Method\n\nWe cite [Vaswani et al., 2017] and [Devlin et al., 2019].\n"
+            "We propose a novel architecture that improves retrieval.\n"
+        )
+        result = check_positioning(parsed)
+        self.assertTrue(result["signals"]["positioned"])
+        self.assertEqual(result["findings"], [])
+
     # --- scoring integration --------------------------------------------------
 
     def test_overclaim_lowers_contribution_score(self) -> None:

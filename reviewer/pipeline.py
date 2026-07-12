@@ -391,14 +391,6 @@ def _compose_review(state: ReviewState) -> str:
     )
     return f"""# Track 2 — ICML-Style Review
 
-## Scores
-
-{score_lines}
-
-## Summary
-
-{summary_text}
-
 ## Paper and Evidence Identity
 
 - Review Agent name/version: NFL-Auditor / `{state.agent_version}`
@@ -406,6 +398,10 @@ def _compose_review(state: ReviewState) -> str:
 - Paper version/hash: `{state.paper_path}` / `sha256:{state.paper_hash}`
 - Evidence bundle reviewed: {_format_evidence_identity(state)}
 - Frozen at (UTC): `{state.frozen_at}`
+
+## Summary
+
+{summary_text}
 
 ## Strengths
 
@@ -418,6 +414,10 @@ def _compose_review(state: ReviewState) -> str:
 ## Questions for the Authors
 
 {question_lines}
+
+## Scores
+
+{score_lines}
 {judgment_block}
 ## Ethics and Limitations
 

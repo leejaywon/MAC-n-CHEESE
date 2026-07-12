@@ -1,3 +1,0 @@
-M8 complete: confirmation reruns must support the claimed improvement direction.
-Eval: 1.100000; 10 papers, 7/7 flaws localized, zero false positives.
-Focused tests pass; stale injection-scan assertion recorded as M9.

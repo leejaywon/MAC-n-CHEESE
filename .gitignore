@@ -9,3 +9,6 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+
+# Ralph loop logs (dev artifacts)
+logs/

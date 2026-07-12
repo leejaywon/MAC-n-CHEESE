@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import os
 import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from reviewer import run_pipeline
 from reviewer import pipeline as pipeline_module
+
+
+# Neutralize the judgment-layer opt-in so best==audit assertions never depend on
+# the developer's shell having an API key or the retrieval flag exported.
+_DISABLE_JUDGMENT = mock.patch.dict(
+    os.environ, {"OPENAI_API_KEY": "", "RALPH_BEST_RETRIEVAL": ""}, clear=False
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,10 +45,10 @@ class ModeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 run_pipeline(PAPER, EVIDENCE, Path(directory) / "x.md", mode="turbo")
 
-    def test_best_equals_audit_until_layer_built(self) -> None:
-        # The judgment layer is a no-op today, so best output must equal audit
+    def test_best_equals_audit_when_judgment_disabled(self) -> None:
+        # With the judgment layer's opt-in unset, best output must equal audit
         # output except for the per-run UTC freeze timestamp.
-        with tempfile.TemporaryDirectory() as directory:
+        with _DISABLE_JUDGMENT, tempfile.TemporaryDirectory() as directory:
             audit = VOLATILE_RE.sub("", _review("audit", directory))
             best = VOLATILE_RE.sub("", _review("best", directory))
         self.assertEqual(audit, best)
@@ -64,6 +73,72 @@ class ModeTests(unittest.TestCase):
             pipeline_module._apply_judgment_layer = original
         self.assertIn("## Scientific Judgment (best mode)", best)
         self.assertIn("Scope is limited to n=2", best)
+
+    def test_best_mode_model_critique_renders_and_calibrates(self) -> None:
+        # Drive the full best path with retrieval and the model call faked, so the
+        # grounded judgment, the model provenance, and calibration-only-lowers are
+        # verified end to end without any network or API key spend.
+        original_retrieval = pipeline_module.check_novelty_positioning
+        original_model = pipeline_module._model_critique
+
+        def fake_retrieval(parsed_paper, *args, **kwargs):
+            return {
+                "check": "novelty-positioning",
+                "query": "attention",
+                "retrieved": [],
+                "traces": [
+                    {
+                        "id": "1706.03762",
+                        "title": "Attention Is All You Need",
+                        "similarity": 0.2,
+                        "already_cited": False,
+                        "mentioned_by_title": False,
+                    }
+                ],
+                "questions": [
+                    {
+                        "section": "Questions for the Authors",
+                        "stance": "question",
+                        "text": "Related prior work arXiv:1706.03762 is not cited.",
+                        "references": ["arxiv:1706.03762"],
+                    }
+                ],
+            }
+
+        def fake_model(*, sanitized_paper, grounding, anchor_scores, api_key, **kwargs):
+            return {
+                "comments": [{"stance": "weakness", "text": "Weakness — Single-seed results lack variance. [claim-001]"}],
+                "calibration": {"Soundness": {"value": 1, "reason": "headline unproven under variance"}},
+                "model": "gpt-test",
+                "prompt_sha256": "deadbeef" * 8,
+                "ok": True,
+            }
+
+        pipeline_module.check_novelty_positioning = fake_retrieval
+        pipeline_module._model_critique = fake_model
+        try:
+            with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=False), \
+                    tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                paper = root / "peer.md"
+                paper.write_text(
+                    "# Novel Method\n\n## Method\n\nWe propose a novel method that outperforms all baselines.\n",
+                    encoding="utf-8",
+                )
+                evidence = root / "ev"
+                evidence.mkdir()
+                state = run_pipeline(paper, evidence, root / "review.md", mode="best")
+        finally:
+            pipeline_module.check_novelty_positioning = original_retrieval
+            pipeline_module._model_critique = original_model
+
+        markdown = state.review_markdown
+        self.assertIn("## Scientific Judgment (best mode)", markdown)
+        self.assertIn("Single-seed results lack variance", markdown)      # model comment
+        self.assertIn("arXiv:1706.03762", markdown)                        # retrieval comment
+        self.assertIn("Model critique: `gpt-test`", markdown)              # provenance
+        self.assertEqual(state.scores["Soundness"]["value"], 1)            # calibration lowered 2 -> 1
+        self.assertIn("calibration lowered", markdown.lower())
 
 
 if __name__ == "__main__":

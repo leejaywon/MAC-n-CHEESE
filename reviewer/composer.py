@@ -159,12 +159,19 @@ def calibrate_scores(
     verdicts: list[dict[str, Any]],
     findings: list[dict[str, Any]] | None = None,
     self_review_dishonest: int = 0,
+    positioning: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Apply the explicit §5 borderline-first scoring policy.
 
     An integrity breach — a proven contradiction OR a dishonest self-certification
     — is a serious soundness problem that a supported headline result must not
     offset. ``self_review_dishonest`` is the count of dishonest Self-Review boxes.
+    ``positioning`` is the deterministic related-work / novelty audit; a proven
+    novelty/SOTA overclaim (a superiority claim situated against no prior work)
+    lowers Contribution below the borderline anchor. Absent a proven overclaim,
+    Contribution stays at the borderline — verified novelty and broad significance
+    are not machine-checkable here and are left to the ``--best`` judgment layer,
+    so this deterministic pass never inflates Contribution.
     """
 
     verdict_by_claim = {item["claim_id"]: item for item in verdicts}
@@ -211,8 +218,23 @@ def calibrate_scores(
             f"The structural template audit found no proven violation, but structure alone does not "
             f"establish clear presentation [{anchor}]."
         )
-    contribution = 2
-    contribution_reason = f"The evidence trace establishes result support, not novelty or broad significance [{anchor}]."
+    positioning_findings = (positioning or {}).get("findings", [])
+    overclaim = next(
+        (finding for finding in positioning_findings if finding.get("subtype") == "novelty-overclaim"),
+        None,
+    )
+    if overclaim:
+        contribution = 1
+        contribution_reason = (
+            f"A novelty/SOTA claim at paper line {overclaim['location']['line']} is situated against "
+            f"no cited prior work, so the contribution is not established [{anchor}]."
+        )
+    else:
+        contribution = 2
+        contribution_reason = (
+            f"The evidence trace establishes result support, not verified novelty or broad "
+            f"significance [{anchor}]."
+        )
 
     if integrity_breach:
         overall = 1 if breach_count >= 2 else 2

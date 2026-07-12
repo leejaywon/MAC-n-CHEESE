@@ -303,14 +303,29 @@ def _row_context(parsed_paper: dict[str, Any], token: dict[str, Any]) -> str:
     return str(token.get("context", ""))
 
 
-def check_ledger_trace(parsed_paper: dict[str, Any], evidence_dir: Path) -> dict[str, Any]:
+def check_ledger_trace(
+    parsed_paper: dict[str, Any], evidence_dir: Path, event_format: bool = True
+) -> dict[str, Any]:
     """Trace metric-labelled paper values to ``experiments.jsonl`` records.
 
     The return value is JSON-serializable and separates successful/failed
     per-number traces from findings, which contain only proven evidence gaps.
+
+    ``event_format`` distinguishes an event submission (expected to ship a ledger)
+    from an arbitrary peer paper. When it is False and no ledger exists, an
+    unmatched prose value proves nothing — there is no ledger to trace against —
+    so only transparency traces are emitted, never findings. This mirrors
+    baseline-fairness and prevents a false positive on any normal paper that
+    reports a metric-labelled number (e.g. an Inception score in its abstract).
     """
 
     ledger_values, findings, ledger_paths = _load_ledgers(evidence_dir)
+    # With a ledger present, an unmatched value is a real finding (fabricated-result
+    # detection). With no ledger, findings are honest only for an event submission
+    # that was expected to ship one; on a peer paper (event_format False) the
+    # absence proves nothing and must not be flagged.
+    has_ledger = bool(ledger_paths)
+    suppress_missing_ledger_findings = not has_ledger and not event_format
     ledger_fields = {
         value.field
         for value in ledger_values
@@ -357,7 +372,7 @@ def check_ledger_trace(parsed_paper: dict[str, Any], evidence_dir: Path) -> dict
         }
         traces.append(trace)
 
-        if matches:
+        if matches or suppress_missing_ledger_findings:
             continue
         evidence_path = ", ".join(ledger_paths) if ledger_paths else "experiments.jsonl (not found)"
         expected_values = sorted({value.value for value in candidates})

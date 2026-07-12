@@ -44,7 +44,13 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
       PROMPT §4). Then strengthen the weakest check until it catches the case.
       This is honest detection headroom the deterministic reviewer can close.
 - [ ] M10b: deterministic scientific scaffolding (spec §4b — the [deterministic]
-      items ONLY). S5 emits, per kept-candidate hypothesis: a claim-scope note vs
+      items ONLY). SESSION-3 PARTIAL: positioning-lite is DONE (reviewer/positioning.py:
+      related-work presence + novelty/SOTA overclaim → Weakness + Contribution↓;
+      derived critique, kept out of detection/FP) and the single-run/no-variance
+      design critique already exists (reviewer/scientific_scaffolding.py). REMAINING
+      ONLY: a claim-scope note vs the ledger's actual coverage (# trials/seeds/GPU)
+      and one templated follow-up per substantive Weakness. Do NOT reimplement
+      positioning. S5 emits, per kept-candidate hypothesis: a claim-scope note vs
       the ledger's actual coverage (# trials, seeds, GPU type), a design critique
       (single-run / no-variance / missing confirmation rerun), one templated
       follow-up per substantive Weakness, and a positioning-lite check (zero
@@ -53,7 +59,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
       the FP rule. Measured by section COMPLETENESS + external robustness, NOT by
       the detection metric. Do NOT add answer-key "detection" entries for these.
       (The NAMED confound + real positioning are judgment — they belong to M14.)
-- [ ] M11: external generalization smoke test — for every paper in
+- [x] M11: external generalization smoke test — for every paper in
       `eval/external/` (real published AI papers placed by a human; skip if the
       dir is empty), `eval.py` already runs the pipeline and reports a robustness
       sub-metric (external_no_crash_rate + external_completeness +
@@ -61,7 +67,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
       findings per external paper in the Progress Log. Raising external
       robustness (no crashes, full sections, non-trivial findings) is a real
       goal even without an answer key.
-- [ ] M13: judgment-layer scaffold, NO model yet (spec §4c). The `--best` hook
+- [x] M13: judgment-layer scaffold, NO model yet (spec §4c). The `--best` hook
       `_apply_judgment_layer` in `reviewer/pipeline.py` is already wired and
       no-op. Implement the GROUNDING machinery it needs: a function that takes
       candidate critique sentences + the S3 findings / S4 verdicts and keeps a
@@ -70,14 +76,14 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
       sentences (the §4b scaffolding) so `best` output is still reproducible and
       the machinery is proven before any model is added. Add a test: `best` runs,
       audit output byte-identical to `--mode audit`.
-- [ ] M14 (GATED — only if API-key + Codex credit confirmed at check-in; else
+- [x] M14 (GATED — only if API-key + Codex credit confirmed at check-in; else
       SKIP and log why): add the model DRAFT behind the M13 grounding. Feed ONLY
       the sanitized paper text; temperature 0 + fixed seed; record model id +
       prompt hash in the freeze block; calibration may only LOWER scores. On any
       model/quota error, leave `state.judgment` empty so audit output stands.
       One bounded call budget per review. Verify injection twins still score
       invariant (sanitize-first) and audit-mode determinism is untouched.
-- [ ] M15 (optional, after M14): multi-persona drafts (harsh-theorist /
+- [x] M15 (optional, after M14): multi-persona drafts (harsh-theorist /
       empiricist / reproducibility-cop) merged by an AC meta-review, all still
       gated by M13 grounding. Personas add coverage, never authority.
 - [ ] M12 (terminal filler, repeatable until 15:00): hill-climb round — read the
@@ -139,6 +145,47 @@ Remaining (forward):
       a flagged common mistake); scoring treats a proven contradiction OR a
       dishonest self-certification as an integrity breach → Soundness 1 / Overall
       reject, not offset by supported results.
-- [ ] G3: judgment layer (M13–M15) = main remaining substance lever for
+- [x] G3: judgment layer (M13–M15) = main remaining substance lever for
       evidence-poor peer papers; needs Codex API quota. PDF input likely unneeded
-      (peer papers use the Markdown official template).
+      (peer papers use the Markdown official template). DONE in session 3 (below).
+
+## Session 3 (human-directed — ICML research-evaluation layers: positioning / novelty / model critique)
+
+Added the research-depth half of an ICML review on top of the deterministic
+audit. 82 tests green; event eval stays 1.10 (detection 1.0, FP 0, injection 1.0);
+external smoke: 7 real papers, no crash, completeness 1.0, 0 false findings. DO
+NOT reimplement any of the below — search the code first (PROMPT §3).
+
+- M10b positioning-lite → `reviewer/positioning.py` (ships in `audit`): related-work
+  presence + novelty/SOTA overclaim (a superiority claim situated against zero prior
+  work → Weakness + Contribution→1). FP-safe, self-suppressing, kept OUT of
+  detection/FP accounting (derived critique). Replaced the hardcoded Contribution=2.
+- M13 grounding + M14 model + M15 personas → `reviewer/novelty_positioning.py`
+  (retrieval, `--best`) + `reviewer/model_critique.py` (model, `--best`). Retrieval:
+  real arXiv search for topically-close prior work; a closely-related uncited paper →
+  grounded Question naming the real arXiv id; injectable fetch + cache; 429/failure
+  degrades to none. Model: dependency-free OpenAI-compatible call; multi-persona
+  (harsh-theorist/empiricist/repro-cop) + AC meta-review; sanitize-first (injection-
+  scan output only); grounding ENFORCED in code (ungrounded praise dropped, ungrounded
+  criticism→question); calibration only LOWERS; temperature 0 + seed; model id +
+  prompt sha256 in the Scientific Judgment provenance line. Both run AFTER the S6
+  freeze so audit identity/verdict-digest are untouched. Enablement gated on
+  OPENAI_API_KEY or RALPH_BEST_RETRIEVAL; disabled → best==audit (test_modes).
+  Live-verified on Attention (gpt-4o-mini): grounded weaknesses + Soundness 2→1.
+- Review format (human request): Scores are the headline (top, Overall first); a
+  closing `## Comment` ends the review. eval markers updated; completeness 1.0.
+- Generality bug the real-paper corpus caught: `ledger-trace` flagged a DDPM
+  Inception score as "absent from experiments.jsonl" on a paper with NO ledger.
+  Fixed with an `event_format` guard (peer paper → no finding; event submission
+  missing its ledger → still flagged). Regression test in test_generality.py.
+- Env: dependency-free `_load_dotenv` in run_review.py loads `.env`
+  (OPENAI_API_KEY / RALPH_BEST_RETRIEVAL); OPENAI_MODEL / OPENAI_BASE_URL honored.
+
+M11 external findings: the 7 corpus papers are well-positioned real papers, so
+mechanical findings are ~0 (correct — this is fairness, not a miss); positioning
+self-suppresses on all 7; best-mode retrieval/model surface the positioning
+questions. Attention: 1 comparator-less-superiority positioning Question.
+
+Genuinely remaining for the loop: M10a (add ONE harder mechanically-reachable eval
+case + strengthen the weakest deterministic check); M10b remainder (claim-scope-vs-
+ledger note + one templated follow-up per Weakness); M12 hill-climb.

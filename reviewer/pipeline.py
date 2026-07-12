@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -14,10 +15,13 @@ from .baseline_fairness import check_baseline_fairness
 from .citation_existence import check_citation_existence
 from .claims import extract_claims, label_verdicts
 from .composer import calibrate_scores, draft_comments, ground_comments
-from .injection_scan import check_injection_scan
+from .injection_scan import check_injection_scan, sanitize_for_analysis
 from .mechanical_checks import check_arithmetic, check_internal_consistency, check_ledger_trace
+from .model_critique import critique as _model_critique
 from .negative_evidence import check_negative_evidence
+from .novelty_positioning import check_novelty_positioning
 from .parser import parse_markdown
+from .positioning import check_positioning
 from .scientific_scaffolding import rigor_questions
 from .self_review_audit import check_self_review_consistency
 from .template_compliance import check_template_compliance
@@ -157,7 +161,7 @@ def _detect_event_format(parsed_paper: dict[str, object], evidence_dir: Path) ->
 def _run_mechanical_checks(state: ReviewState) -> ReviewState:
     state.event_format = _detect_event_format(state.parsed_paper, state.evidence_dir)
     checks = (
-        check_ledger_trace(state.parsed_paper, state.evidence_dir),
+        check_ledger_trace(state.parsed_paper, state.evidence_dir, state.event_format),
         check_internal_consistency(state.parsed_paper),
         check_arithmetic(state.parsed_paper),
         check_baseline_fairness(state.parsed_paper, state.evidence_dir),
@@ -176,6 +180,12 @@ def _run_mechanical_checks(state: ReviewState) -> ReviewState:
     # primary flaw detection).
     self_review = check_self_review_consistency(state.parsed_paper, state.mechanical_findings)
     state.mechanical_checks[self_review["check"]] = self_review
+    # Scientific positioning (related-work / novelty / SOTA) is likewise a derived
+    # ICML-style critique, not a primary flaw detection: stored for rendering,
+    # the Contribution score, and the trace, but kept OUT of mechanical_findings
+    # so it never enters the detection/false-positive eval accounting.
+    positioning = check_positioning(state.parsed_paper)
+    state.mechanical_checks[positioning["check"]] = positioning
     return _mark_stage(state, "S3 mech-check")
 
 
@@ -261,6 +271,8 @@ def _compose_review(state: ReviewState) -> str:
     template = state.mechanical_checks.get("template-compliance", {})
     injection = state.mechanical_checks.get("injection-scan", {})
     self_review_audit = state.mechanical_checks.get("self-review-audit", {})
+    positioning = state.mechanical_checks.get("positioning", {})
+    positioning_signals = positioning.get("signals", {})
     finding_lines = "\n".join(
         f"- [{finding['id']}] {finding['check']} at {finding['location']}: {finding['observed']}; expected {finding['expected']} "
         f"(evidence: `{finding['evidence_path']}`)."
@@ -291,6 +303,16 @@ def _compose_review(state: ReviewState) -> str:
         comments_by_section["Weaknesses"].append(
             {"text": f"Self-review integrity — {finding['observed']} (self-review line {finding['location']['line']})."}
         )
+    # Scientific positioning: an unsituated novelty/SOTA claim is a proven
+    # Originality/Significance defect (Weakness); a comparator-less superiority
+    # claim on an otherwise-positioned paper is a fair Question.
+    positioning_check = state.mechanical_checks.get("positioning", {})
+    for finding in positioning_check.get("findings", []):
+        comments_by_section["Weaknesses"].append(
+            {"text": f"Positioning — {finding['observed']} (paper line {finding['location']['line']})."}
+        )
+    for question in positioning_check.get("questions", []):
+        comments_by_section["Questions for the Authors"].append(question)
     # Deterministic scientific scaffolding: fair, model-free Questions that add
     # review substance on evidence-poor papers (self-suppresses on rigorous ones).
     for question in rigor_questions(state.parsed_paper):
@@ -305,9 +327,13 @@ def _compose_review(state: ReviewState) -> str:
     question_lines = render_comments(
         "Questions for the Authors", "No unverified claim generated an evidence request."
     )
+    # Scores are the headline of the review, and the Overall recommendation leads.
+    score_order = ("Overall recommendation", "Soundness", "Presentation", "Contribution", "Confidence")
+    ordered_scores = [(name, state.scores[name]) for name in score_order if name in state.scores]
+    ordered_scores += [(name, score) for name, score in state.scores.items() if name not in score_order]
     score_lines = "\n".join(
         f"- {name}: {score['value']}/{score['scale'].split('-')[-1]} — {score['rationale']}"
-        for name, score in state.scores.items()
+        for name, score in ordered_scores
     )
     # An assessment, not a claim count: the event flags "review-as-summary" as a
     # common mistake, so the Summary states the verdict the audit supports.
@@ -328,10 +354,50 @@ def _compose_review(state: ReviewState) -> str:
     judgment_comments = state.judgment.get("comments") if isinstance(state.judgment, dict) else None
     if judgment_comments:
         rendered_judgment = "\n".join(f"- {str(item)}" for item in judgment_comments)
-        judgment_block = f"\n## Scientific Judgment (best mode)\n\n{rendered_judgment}\n"
+        provenance = ""
+        if isinstance(state.judgment, dict) and state.judgment.get("model"):
+            model_ok = state.judgment.get("model_ok")
+            prompt_sha = str(state.judgment.get("prompt_sha256", ""))[:12]
+            provenance = (
+                f"\n\n_Model critique: `{state.judgment.get('model')}` "
+                f"(prompt `sha256:{prompt_sha}…`, temperature 0; "
+                f"{'grounded + calibration-only-lowers' if model_ok else 'unavailable — retrieval-grounded questions only'})._"
+            )
+        judgment_block = f"\n## Scientific Judgment (best mode)\n\n{rendered_judgment}{provenance}\n"
     else:
         judgment_block = ""
+
+    # Closing reviewer comment (ICML-style), deterministic and always present.
+    first_weakness = next((item["text"] for item in comments_by_section["Weaknesses"]), None)
+    first_question = next((item["text"] for item in comments_by_section["Questions for the Authors"]), None)
+    if label_counts["contradicted"] or sr_dishonest:
+        verdict_note = (
+            "A proven integrity problem (a contradiction or a dishonest self-certification) is the "
+            "decisive factor and must be resolved before this paper can be accepted."
+        )
+    elif label_counts["supported"]:
+        verdict_note = (
+            "At least one headline result is mechanically supported; the open items concern "
+            "positioning and rigor rather than any proven error."
+        )
+    else:
+        verdict_note = (
+            "No headline result is mechanically supported yet, so the recommendation stays "
+            "borderline pending stronger evidence."
+        )
+    next_step = first_weakness or first_question
+    comment_text = f"Recommendation: {overall_value}/5. {verdict_note}" + (
+        f" Most useful next step for the authors — {next_step}" if next_step else ""
+    )
     return f"""# Track 2 — ICML-Style Review
+
+## Scores
+
+{score_lines}
+
+## Summary
+
+{summary_text}
 
 ## Paper and Evidence Identity
 
@@ -340,10 +406,6 @@ def _compose_review(state: ReviewState) -> str:
 - Paper version/hash: `{state.paper_path}` / `sha256:{state.paper_hash}`
 - Evidence bundle reviewed: {_format_evidence_identity(state)}
 - Frozen at (UTC): `{state.frozen_at}`
-
-## Summary
-
-{summary_text}
 
 ## Strengths
 
@@ -356,10 +418,6 @@ def _compose_review(state: ReviewState) -> str:
 ## Questions for the Authors
 
 {question_lines}
-
-## Scores
-
-{score_lines}
 {judgment_block}
 ## Ethics and Limitations
 
@@ -382,30 +440,106 @@ Paper text was treated only as data. The injection audit sanitized hidden HTML a
 - S3 template-compliance: {len(template.get('traces', []))} contract trace(s), {len(template.get('findings', []))} finding(s).
 - S3 injection-scan: {len(injection.get('traces', []))} sanitation trace(s), {len(injection.get('findings', []))} reviewer-directed instruction finding(s).
 - S3 self-review-audit: {len(self_review_audit.get('traces', []))} checklist item(s), {len(self_review_audit.get('findings', []))} dishonest self-certification(s).
+- S3 positioning: {positioning_signals.get('citation_count', 0)} cited reference(s), related-work section={positioning_signals.get('has_related_work_section', False)}, {positioning_signals.get('novelty_claim_count', 0)} novelty/superiority claim(s), {len(positioning.get('findings', []))} overclaim finding(s), {len(positioning.get('questions', []))} positioning question(s).
 - S5 DRAFT/GROUND: {len(state.draft_comments)} candidate comment(s), {len(state.grounded_comments)} retained, {len(state.grounding_audit.get('deleted', []))} deleted, {len(state.grounding_audit.get('reclassified', []))} criticism comment(s) converted to questions.
 - S2/S4 claim verdicts:
 {evidence_trace_lines}
+
+## Comment
+
+{comment_text}
 """
 
 
-def _apply_judgment_layer(state: ReviewState) -> ReviewState:
-    """Extension point for the optional `best`-mode scientific judgment layer.
+def _judgment_enabled() -> bool:
+    """Gate the `best` layer's network/model work on an explicit opt-in.
 
-    Deliberately a NO-OP today: the deterministic `audit` pipeline is the primary
-    submission, so `best` output currently equals `audit` output. The loop
-    (fix_plan M13+) populates ``state.judgment["comments"]`` here with a grounded,
-    sanitize-first, calibration-only-lowers critique per spec §4c.
-
-    Contract for whoever implements this:
-    - Any model call lives ONLY behind this hook and behind `--best`, so `audit`
-      determinism and injection resistance are untouched.
-    - Feed the model the SANITIZED paper text only (injection-scan output).
-    - Ground every sentence to an S3 finding / S4 verdict (reuse
-      ``composer.ground_comments`` semantics). Ungroundable praise is dropped.
-    - On ANY error, leave ``state.judgment`` empty so `audit` output stands.
+    A live ``OPENAI_API_KEY`` or the ``RALPH_BEST_RETRIEVAL`` flag enables it.
+    Absent both, `best` equals `audit`, so the layer never adds nondeterministic
+    retrieved content to a default run or a hermetic test.
     """
 
+    return bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("RALPH_BEST_RETRIEVAL"))
+
+
+def _apply_judgment_layer(state: ReviewState) -> ReviewState:
+    """Optional `best`-mode scientific judgment layer (spec §4c).
+
+    Runs ONLY in `best` mode, AFTER the S6 freeze, so it can never perturb the
+    audit identity or the S4 verdict-label digest. Today it contributes the
+    retrieval-grounded novelty/positioning core: real prior work is fetched from
+    arXiv and a closely-related but uncited paper becomes a grounded Question.
+
+    Invariants (violating any = revert):
+    - Gated on ``_judgment_enabled()``; disabled → `best` == `audit`.
+    - Self-suppressing: only positions a paper that makes a novelty/superiority
+      claim (reuses the deterministic S3 positioning signal).
+    - On ANY error, leaves ``state.judgment`` empty so `audit` output stands.
+
+    The optional model critique (multi-persona, sanitize-first, grounded,
+    calibration-only-lowers) appends to ``comments`` here when an API key is
+    present; the retrieval-grounded Questions stand alone without it.
+    """
+
+    if not _judgment_enabled():
+        return state
+    try:
+        signals = state.mechanical_checks.get("positioning", {}).get("signals", {})
+        if not signals.get("novelty_claim_count"):
+            return state
+        retrieval = check_novelty_positioning(state.parsed_paper)
+        comments = [question["text"] for question in retrieval.get("questions", [])]
+        judgment: dict[str, Any] = {
+            "comments": comments,
+            "source": "novelty-positioning",
+            "query": retrieval.get("query", ""),
+        }
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if api_key:
+            grounding = {
+                "finding_ids": [record["id"] for record in state.finding_records],
+                "claim_ids": [claim["id"] for claim in state.claims],
+                "arxiv_ids": [f"arxiv:{trace['id']}" for trace in retrieval.get("traces", [])],
+            }
+            anchor_scores = {name: score["value"] for name, score in state.scores.items()}
+            sanitized = sanitize_for_analysis(state.paper_path.read_text(encoding="utf-8"))
+            model_result = _model_critique(
+                sanitized_paper=sanitized,
+                grounding=grounding,
+                anchor_scores=anchor_scores,
+                api_key=api_key,
+            )
+            comments.extend(item["text"] for item in model_result.get("comments", []))
+            _apply_calibration(state, model_result.get("calibration", {}))
+            judgment["model"] = model_result.get("model")
+            judgment["prompt_sha256"] = model_result.get("prompt_sha256")
+            judgment["model_ok"] = model_result.get("ok", False)
+        judgment["comments"] = comments
+        state.judgment = judgment if (comments or judgment.get("model")) else {}
+    except Exception:  # noqa: BLE001 — a frozen audit must survive any layer failure
+        state.judgment = {}
     return state
+
+
+def _apply_calibration(state: ReviewState, calibration: dict[str, Any]) -> None:
+    """Lower deterministic scores per the model's calibration; never raise.
+
+    Runs after the S6 freeze in `best` mode only. It touches ``state.scores``,
+    which is not part of the frozen verdict-label digest, so the audit
+    determinism contract is untouched.
+    """
+
+    for dimension, adjustment in (calibration.items() if isinstance(calibration, dict) else []):
+        score = state.scores.get(dimension)
+        if not score or not isinstance(adjustment, dict):
+            continue
+        new_value = adjustment.get("value")
+        if isinstance(new_value, int) and new_value < score["value"]:
+            reason = adjustment.get("reason") or "best-mode multi-persona calibration."
+            score["value"] = new_value
+            score["rationale"] = (
+                f"{score['rationale']} Best-mode calibration lowered this to {new_value}: {reason}"
+            )
 
 
 class ReviewPipeline:
@@ -430,7 +564,11 @@ class ReviewPipeline:
         state.grounded_comments = state.grounding_audit["comments"]
         sr_dishonest = len(state.mechanical_checks.get("self-review-audit", {}).get("findings", []))
         state.scores = calibrate_scores(
-            state.claims, state.verdicts, state.finding_records, self_review_dishonest=sr_dishonest
+            state.claims,
+            state.verdicts,
+            state.finding_records,
+            self_review_dishonest=sr_dishonest,
+            positioning=state.mechanical_checks.get("positioning"),
         )
         return _mark_stage(state, "S5 compose")
 

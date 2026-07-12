@@ -67,8 +67,11 @@ class CitationExistenceTests(unittest.TestCase):
 
         self.assertEqual(len(mismatch["findings"]), 1)
         self.assertIn("API title", mismatch["findings"][0]["observed"])
-        self.assertEqual(len(absent["findings"]), 1)
-        self.assertIn("no record", absent["findings"][0]["observed"])
+        # A Semantic Scholar 404 for a DOI is NOT proof of nonexistence (S2 does
+        # not index every DOI), so it must not be a finding — only the trace records
+        # it. Fabricated-arXiv detection (authoritative) is covered elsewhere.
+        self.assertEqual(absent["findings"], [])
+        self.assertEqual(absent["traces"][0]["status"], "not-found")
 
     def test_timeout_is_unavailable_trace_not_a_finding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

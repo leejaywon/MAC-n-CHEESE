@@ -62,6 +62,33 @@ class ModelCritiqueTests(unittest.TestCase):
         # grounded question kept and cited
         self.assertTrue(any("Question — How does it differ? [arxiv:1706.03762]" == text for text in texts))
 
+    def test_weakness_citing_a_plain_claim_is_demoted_to_question(self) -> None:
+        # The core fairness fix: a generic criticism stapled to an ordinary
+        # (unverifiable) claim id must NOT become a grounded Weakness. Only a
+        # finding / contradicted-claim / arXiv id is defect-evidence; a plain
+        # claim id demotes the criticism to a Question.
+        result = self._run(
+            {
+                "items": [{"stance": "weakness", "text": "Missing baselines.", "grounding": "claim-001"}],
+                "calibration": {},
+            }
+        )
+        texts = [comment["text"] for comment in result["comments"]]
+        self.assertEqual(texts, ["Question — Missing baselines. [claim-001]"])
+        self.assertFalse(any(text.startswith("Weakness") for text in texts))
+
+    def test_weakness_grounded_in_a_finding_stays_a_weakness(self) -> None:
+        result = self._run(
+            {
+                "items": [{"stance": "weakness", "text": "Result contradicts the ledger.", "grounding": "finding-001"}],
+                "calibration": {},
+            }
+        )
+        self.assertEqual(
+            [comment["text"] for comment in result["comments"]],
+            ["Weakness — Result contradicts the ledger. [finding-001]"],
+        )
+
     def test_calibration_only_lowers(self) -> None:
         result = self._run(
             {

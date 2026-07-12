@@ -19,6 +19,7 @@ stand alone.
 
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import unicodedata
@@ -49,6 +50,10 @@ STOPWORDS = frozenset(
 
 WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9+/-]{1,}")
 ARXIV_ABS_RE = re.compile(r"arxiv\.org/abs/(?P<id>[^\s<]+)", re.I)
+# The official arXiv DOI form, e.g. "doi:10.48550/arXiv.2004.05150" — a very
+# common way to cite an arXiv work that the bare arXiv patterns miss, causing a
+# false "not cited" accusation. It maps directly onto the arXiv id.
+ARXIV_DOI_RE = re.compile(r"10\.48550/arxiv\.(?P<id>\d{4}\.\d{4,5})", re.I)
 
 
 def _default_fetch(url: str) -> bytes:
@@ -108,7 +113,7 @@ def _topic_terms(parsed_paper: dict[str, Any], limit: int = 8) -> list[str]:
 def _cited_arxiv_ids(parsed_paper: dict[str, Any]) -> set[str]:
     text = _paper_text(parsed_paper)
     ids: set[str] = set()
-    for pattern in (ARXIV_RE, BRACKET_ARXIV_RE):
+    for pattern in (ARXIV_RE, BRACKET_ARXIV_RE, ARXIV_DOI_RE):
         for match in pattern.finditer(text):
             ids.add(re.sub(r"v\d+$", "", match.group("id"), flags=re.I).casefold())
     return ids
@@ -156,7 +161,18 @@ def _retrieve_arxiv(
     )
     try:
         entries = _parse_search_feed(fetch(url))
-    except (HTTPError, URLError, TimeoutError, OSError, ValueError, ElementTree.ParseError):
+    except (
+        HTTPError,
+        URLError,
+        TimeoutError,
+        OSError,
+        http.client.HTTPException,
+        ValueError,
+        TypeError,
+        ElementTree.ParseError,
+    ):
+        # Any retrieval failure (including a truncated read, which is an
+        # http.client.HTTPException and not an OSError) degrades to no prior work.
         return []
     cache_dir.mkdir(parents=True, exist_ok=True)
     path.write_text(

@@ -42,43 +42,78 @@ RELATED_WORK_TITLE_RE = re.compile(
     r"literature\s+review|references|bibliography)\b",
     re.I,
 )
-# Numeric citation markers: [12], [3, 4], [5-7]. A dot is excluded so a bracketed
-# arXiv id ("[2305.14567]") is owned by the arXiv patterns, not miscounted here.
-NUMERIC_CITE_RE = re.compile(r"\[\d{1,3}(?:\s*[,–-]\s*\d{1,3})*\]")
-# Author-year citations: "(Vaswani et al., 2017)", "(Smith & Jones, 2020)", and
-# the narrative form "Vaswani et al. (2017)".
+# Numeric citation markers: [12], [3, 4], [5-7], and 1000+ ref lists ([1024]). A
+# dot is excluded so a bracketed arXiv id ("[2305.14567]") is owned by the arXiv
+# patterns. Over-counting only makes a paper look MORE positioned, which is the
+# safe direction, so recognition is deliberately generous.
+NUMERIC_CITE_RE = re.compile(r"\[\d{1,4}(?:\s*[,–-]\s*\d{1,4})*\]")
+# Author-year citations in parentheses OR square brackets (the ACL Anthology /
+# ICLR / NeurIPS standard), the narrative form "Vaswani et al. (2017)", and
+# natbib keys ("[Vaswani2017]", "[VaswaniEtAl2017]"). Recognizing more citation
+# styles prevents a false "unpositioned" verdict on a paper that DOES cite work.
 AUTHOR_YEAR_RE = re.compile(
-    r"\([A-Z][A-Za-z.'’-]+"
-    r"(?:\s+(?:et\s+al\.?|and|&|[A-Z][A-Za-z.'’-]+))*,?\s+(?:18|19|20)\d{2}[a-z]?\)"
+    r"[\(\[][A-Z][A-Za-z.'’-]+"
+    r"(?:\s+(?:et\s+al\.?|and|&|[A-Z][A-Za-z.'’-]+))*,?\s+(?:18|19|20)\d{2}[a-z]?[\)\]]"
     r"|[A-Z][A-Za-z.'’-]+\s+et\s+al\.?\s*\((?:18|19|20)\d{2}[a-z]?\)"
+    r"|\[[A-Z][A-Za-z]+(?:etal)?\d{2,4}[a-z]?\]"
 )
 
+# A novelty / priority / state-of-the-art CLAIM must be an explicit claim about
+# the work's OWN contribution — not an incidental "novel"/"new" as in the task
+# names "novel view synthesis" or "novel class discovery". Requires a first-person
+# or contribution frame.
 NOVELTY_RE = re.compile(
-    r"\b(?:novel(?:ty)?|for\s+the\s+first\s+time|we\s+are\s+the\s+first|first\s+to\s+\w+|"
-    r"to\s+the\s+best\s+of\s+our\s+knowledge|state[- ]of[- ]the[- ]art|\bSOTA\b|"
-    r"new(?:\s+\w+){0,2}\s+(?:method|approach|framework|architecture|algorithm|technique|model))\b",
+    r"\b(?:"
+    r"we\s+(?:are|were)\s+the\s+first\b"
+    r"|(?:is|are)\s+the\s+first\s+(?:method|approach|work|paper|model|system|framework|algorithm|technique)\s+to\b"
+    r"|for\s+the\s+first\s+time\b"
+    r"|to\s+(?:the\s+)?best\s+of\s+our\s+knowledge\b"
+    r"|(?:new\s+)?state[-\s]of[-\s]the[-\s]art\b|\bSOTA\b|best[-\s]performing\b|advanc(?:e|es|ing)\s+the\s+state\b"
+    r"|(?:we\s+(?:propose|present|introduce|develop|design|devise|offer)|our)\s+(?:[a-z]+[\s,]+){0,4}?(?:novel|new)\s+(?:method|approach|framework|architecture|algorithm|technique|model|network|module|paradigm|formulation|objective|loss|scheme)"
+    r"|(?:a|the|this)\s+(?:novel|new)\s+(?:method|approach|framework|architecture|algorithm|technique|model|network|module|paradigm|formulation)\s+(?:that|which|for|to|is|we|,)"
+    r")",
     re.I,
 )
+# A superiority CLAIM: a superiority verb pointed at a comparison TARGET
+# (baselines / prior / other methods), so ordinary uses of "beats" (music) or
+# "exceeds the memory budget" do NOT register as claims.
 SUPERIORITY_RE = re.compile(
     r"\b(?:outperform(?:s|ed|ing)?|surpass(?:es|ed|ing)?|beat(?:s|en|ing)?|"
-    r"exceed(?:s|ed|ing)?|superior\s+to|better\s+than|best[- ]performing|"
-    r"advanc(?:e|es|ing)\s+the\s+state)\b",
+    r"exceed(?:s|ed|ing)?|superior|better)\b"
+    r"[^.!?]{0,48}?\b(?:baselines?|state[-\s]of[-\s]the[-\s]art|sota|prior|previous|existing|"
+    r"competing|other\s+(?:methods?|models?|systems?|approaches|networks?)|"
+    r"all\s+(?:[a-z]+\s+){0,3}?(?:methods?|models?|systems?|approaches|baselines?|networks?))\b",
     re.I,
 )
-# Hypotheticals / plans: "aims to outperform", "could surpass" are not live claims.
-NON_CLAIM_RE = re.compile(
-    r"\b(?:aim(?:s|ed)?\s+to|could|expect(?:s|ed)?|future|goal|hope(?:s|d)?\s+to|"
-    r"hypothes(?:is|ize[ds]?)|might|plan(?:s|ned)?\s+to|potential(?:ly)?|would)\b",
+# A looser superiority claim with a first-person subject ("our approach
+# outperforms significantly") — used only for the softer Question path, never to
+# trigger a Weakness.
+SUPERIORITY_LOOSE_RE = re.compile(
+    r"\b(?:we|our\s+(?:method|approach|model|system|framework|technique|algorithm|results?|work))\b"
+    r"[^.!?]{0,32}?\b(?:outperform(?:s|ed|ing)?|surpass(?:es|ed|ing)?|"
+    r"(?:is|are)\s+superior\s+to|(?:is|are|performs?|do(?:es)?)\s+better\s+than)\b",
     re.I,
 )
-# Negation immediately before a novelty/superiority keyword: "does not outperform".
+# Negation directly on a claim word ("does not outperform", "not novel") within
+# ~2 words, so "no fewer than three novel modules" is NOT read as a negation.
 NEGATED_RE = re.compile(
-    r"\b(?:not|no|never|without|do(?:es)?\s+not|did\s+not)\b[^.!?]{0,20}?"
-    r"\b(?:novel|outperform|surpass|beat|better|superior|exceed|"
-    r"state[- ]of[- ]the[- ]art|sota|first)\b",
+    r"\b(?:not|never|n't|no\s+longer|do(?:es)?\s+not|did\s+not)\s+(?:[a-z]+\s+){0,2}?"
+    r"\b(?:novel|state[-\s]of[-\s]the[-\s]art|sota|outperform\w*|surpass\w*|beat\w*|"
+    r"exceed\w*|superior|better\s+than|first\s+to)\b",
     re.I,
 )
-# Naming an external comparator: a baseline, or "compared to/with <Name>", etc.
+# A future/hypothetical claim ("we plan to outperform", "aim to surpass"): the
+# modal must directly govern a CLAIM verb. So "we hope to extend it further"
+# (future work unrelated to the claim) and "we would like to note … SOTA" are NOT
+# suppressed, while "we plan to outperform the baseline" is.
+HYPOTHETICAL_RE = re.compile(
+    r"\b(?:plan(?:s|ned)?|aim(?:s|ed)?|hope(?:s|d)?|intend(?:s|ed)?|expect(?:s|ed)?|"
+    r"seek(?:s)?|going|will|would|could|might|may|shall)\s+to\s+(?:[a-z]+\s+){0,2}?"
+    r"\b(?:outperform\w*|surpass\w*|beat\w*|exceed\w*|be\s+(?:novel|superior|the\s+first)|"
+    r"achiev\w*\s+state|propose|present|introduce)\b",
+    re.I,
+)
+# Naming an external comparator (used only for the softer Question path).
 COMPARATOR_RE = re.compile(
     r"\bbaselines?\b|\b(?:compared\s+(?:to|with)|relative\s+to|versus|vs\.?|against)\s+"
     r"(?:the\s+)?[A-Za-z][\w.-]*",
@@ -137,27 +172,32 @@ def check_positioning(parsed_paper: dict[str, Any]) -> dict[str, Any]:
     citation_count = _citation_count(lines)
     positioned = has_related_work or citation_count > 0
 
-    claims: list[dict[str, Any]] = []
+    weakness_claims: list[dict[str, Any]] = []  # novelty / SOTA / superiority-with-target
+    question_claims: list[dict[str, Any]] = []  # looser first-person superiority, no comparator
     for sentence, line_number in _claim_sentences(lines):
-        if NON_CLAIM_RE.search(sentence) or NEGATED_RE.search(sentence):
+        # A negated ("does not outperform") or hypothetical ("plan to outperform")
+        # claim is not a live claim.
+        if NEGATED_RE.search(sentence) or HYPOTHETICAL_RE.search(sentence):
             continue
-        if NOVELTY_RE.search(sentence):
-            kind = "novelty"
-        elif SUPERIORITY_RE.search(sentence):
-            kind = "superiority"
-        else:
+        novelty = NOVELTY_RE.search(sentence)
+        superiority = SUPERIORITY_RE.search(sentence)
+        loose = SUPERIORITY_LOOSE_RE.search(sentence)
+        if not (novelty or superiority or loose):
             continue
-        claims.append(
-            {"line": line_number, "kind": kind, "text": sentence, "comparator": bool(COMPARATOR_RE.search(sentence))}
-        )
+        entry = {"line": line_number, "kind": "novelty" if novelty else "superiority", "text": sentence}
+        if novelty or superiority:
+            weakness_claims.append(entry)
+        elif not COMPARATOR_RE.search(sentence):
+            question_claims.append(entry)
+    all_claims = weakness_claims + question_claims
 
     findings: list[dict[str, Any]] = []
     questions: list[dict[str, Any]] = []
 
-    if claims and not positioned:
-        # Provable positioning defect: the paper claims to advance the field but
-        # situates that claim against nothing a reader could check.
-        first = claims[0]
+    if weakness_claims and not positioned:
+        # Provable positioning defect: the paper makes a novelty/superiority claim
+        # but situates it against nothing a reader could check.
+        first = weakness_claims[0]
         findings.append(
             {
                 "check": "positioning",
@@ -175,24 +215,22 @@ def check_positioning(parsed_paper: dict[str, Any]) -> dict[str, Any]:
                 "evidence_path": "paper",
             }
         )
-    elif claims and positioned:
-        # Positioned overall, but a specific superiority claim naming no comparator
-        # is a fair Question, never an accusation.
-        uncompared = [claim for claim in claims if claim["kind"] == "superiority" and not claim["comparator"]]
-        if uncompared:
-            target = uncompared[0]
-            questions.append(
-                {
-                    "section": "Questions for the Authors",
-                    "stance": "question",
-                    "text": (
-                        "Against which specific prior method is the superiority claim measured? "
-                        "The claim names no external baseline at this location, so the strength of "
-                        "the comparison cannot be assessed."
-                    ),
-                    "references": [f"paper:{target['line']}"],
-                }
-            )
+    elif question_claims:
+        # A superiority claim naming no comparator is a fair Question, never an
+        # accusation — whether or not the paper is otherwise positioned.
+        target = question_claims[0]
+        questions.append(
+            {
+                "section": "Questions for the Authors",
+                "stance": "question",
+                "text": (
+                    "Against which specific prior method is the superiority claim measured? "
+                    "The claim names no external baseline at this location, so the strength of "
+                    "the comparison cannot be assessed."
+                ),
+                "references": [f"paper:{target['line']}"],
+            }
+        )
 
     return {
         "check": "positioning",
@@ -201,7 +239,7 @@ def check_positioning(parsed_paper: dict[str, Any]) -> dict[str, Any]:
                 "has_related_work_section": has_related_work,
                 "citation_count": citation_count,
                 "positioned": positioned,
-                "claims": claims,
+                "claims": all_claims,
             }
         ],
         "findings": findings,
@@ -210,6 +248,6 @@ def check_positioning(parsed_paper: dict[str, Any]) -> dict[str, Any]:
             "has_related_work_section": has_related_work,
             "citation_count": citation_count,
             "positioned": positioned,
-            "novelty_claim_count": len(claims),
+            "novelty_claim_count": len(all_claims),
         },
     }

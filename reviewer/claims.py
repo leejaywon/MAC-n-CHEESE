@@ -20,11 +20,28 @@ ARITHMETIC_RE = re.compile(
     r"\b(?:absolute\s+)?delta\b",
     re.I,
 )
+# A result verb in ANY tense — abstracts routinely use the present ("achieves",
+# "obtains", "reports"), so a past-tense-only pattern mis-types headline numeric
+# results (e.g. "achieves 80.5% GLUE") as generic prose and never questions them.
 RESULT_RE = re.compile(
-    r"\b(?:achieved|attained|measured|observed|obtained|reached|recorded|reports?|"
-    r"resulted|scored|mean|median|average|comparison|experiment|run)\b",
+    r"\b(?:achiev(?:e|es|ed)|attain(?:s|ed)?|obtain(?:s|ed)?|reach(?:es|ed)?|"
+    r"record(?:s|ed)?|report(?:s|ed)?|scor(?:e|es|ed)|result(?:s|ed)?|yield(?:s|ed)?|"
+    r"establish(?:es|ed)?|improv(?:e|es|ed|ement)|reduc(?:e|es|ed|tion)|"
+    r"outperform(?:s|ed)?|surpass(?:es|ed)?|measured|observed|mean|median|average|"
+    r"comparison|experiment|run)\b",
     re.I,
 )
+# A numeric SOTA claim ("state-of-the-art FID of 3.17") is a result regardless of
+# its verb; used only when the sentence also carries a number.
+SOTA_RESULT_RE = re.compile(r"state[-\s]of[-\s]the[-\s]art|\bSOTA\b", re.I)
+# Reference-list / bibliography sections hold citation entries, not research
+# claims — extracting each "[arXiv:1234.5678](…)" line as a claim is boilerplate
+# noise that also inflates the Confidence denominator.
+REFERENCE_SECTION_RE = re.compile(r"\b(?:references|bibliography|works?\s+cited)\b", re.I)
+# A sentence that is wholly a single citation link ("[arXiv:1312.3005](…)") is a
+# reference entry, not a research claim, even when it leaks outside a References
+# section.
+CITATION_ONLY_RE = re.compile(r"^\[[^\]]+\]\([^)]+\)[.,;]?$")
 CITATION_RE = re.compile(r"(?:\[[^\]]+\]|\b(?:arXiv:)?\d{4}\.\d{4,5}(?:v\d+)?\b)")
 CHECKBOX_RE = re.compile(r"^\s*[-*+]\s*\[[ xX]\]\s*")
 LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
@@ -49,7 +66,9 @@ def _numbers_on_line(parsed_paper: dict[str, Any], line: int) -> list[dict[str, 
     ]
 
 
-def _claim_type(text: str, section_title: str, *, table: bool, checkbox: bool) -> str:
+def _claim_type(
+    text: str, section_title: str, *, table: bool, checkbox: bool, has_number: bool = False
+) -> str:
     lowered = text.lower()
     title = section_title.lower()
     if table:
@@ -62,7 +81,7 @@ def _claim_type(text: str, section_title: str, *, table: bool, checkbox: bool) -
         return "arithmetic"
     if "limitation" in title or "limitation" in lowered:
         return "limitation"
-    if "result" in title or RESULT_RE.search(text):
+    if "result" in title or RESULT_RE.search(text) or (has_number and SOTA_RESULT_RE.search(text)):
         return "result"
     if "baseline" in lowered or "method" in title or "experiment" in title:
         return "method"
@@ -109,6 +128,9 @@ def extract_claims(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
         section = _section_for_line(parsed_paper, line_number)
         section_id = section.get("id") if section else None
         section_title = str(section.get("title", "")) if section else ""
+        # Reference-list entries are citations, not claims.
+        if REFERENCE_SECTION_RE.search(section_title):
+            continue
         table_entry = table_by_line.get(line_number)
         if table_entry:
             row = table_entry["row"]
@@ -121,7 +143,7 @@ def extract_claims(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
             raw_claims.append(
                 {
                     "text": text,
-                    "type": _claim_type(text, section_title, table=True, checkbox=False),
+                    "type": _claim_type(text, section_title, table=True, checkbox=False, has_number=True),
                     "numbers": [token["id"] for token in numbers],
                     "refs": CITATION_RE.findall(text),
                     "location": {
@@ -142,6 +164,8 @@ def extract_claims(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
 
         checkbox = bool(CHECKBOX_RE.match(line))
         for text, column_start, column_end in _sentence_spans(line):
+            if CITATION_ONLY_RE.match(text.strip()):
+                continue  # a bare reference link is not a claim
             numbers = [
                 token
                 for token in _numbers_on_line(parsed_paper, line_number)
@@ -150,7 +174,7 @@ def extract_claims(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
             raw_claims.append(
                 {
                     "text": re.sub(r"^\[[ xX]\]\s*", "", text).strip(),
-                    "type": _claim_type(text, section_title, table=False, checkbox=checkbox),
+                    "type": _claim_type(text, section_title, table=False, checkbox=checkbox, has_number=bool(numbers)),
                     "numbers": [token["id"] for token in numbers],
                     "refs": CITATION_RE.findall(text),
                     "location": {

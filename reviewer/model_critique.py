@@ -22,6 +22,7 @@ Hard rules enforced here, not merely requested of the model (spec §4c):
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 from hashlib import sha256
@@ -88,8 +89,29 @@ def _user_prompt(sanitized_paper: str, grounding: dict[str, list[str]], anchor_s
     )
 
 
+def _allowed_sets(grounding: dict[str, list[str]]) -> dict[str, set[str]]:
+    """Per-stance grounding allow-lists. A WEAKNESS may cite ONLY evidence of an
+    actual defect — a proven S3 finding, a contradicted claim, or a closely-
+    related uncited paper — never a raw claim from the inventory, so the model
+    cannot rubber-stamp a generic complaint by stapling it to an arbitrary claim
+    id. A STRENGTH needs a supported claim. A QUESTION may reference anything
+    checkable. This is where best-mode fairness is actually enforced.
+    """
+
+    finding = set(grounding.get("finding_ids", []))
+    contradicted = set(grounding.get("contradicted_claim_ids", []))
+    supported = set(grounding.get("supported_claim_ids", []))
+    claims = set(grounding.get("claim_ids", []))
+    arxiv = set(grounding.get("arxiv_ids", []))
+    return {
+        "weakness": finding | contradicted | arxiv,
+        "strength": supported,
+        "question": claims | arxiv | finding,
+    }
+
+
 def _postprocess(
-    parsed: Any, allowed: set[str], anchor_scores: dict[str, int]
+    parsed: Any, allowed: dict[str, set[str]], anchor_scores: dict[str, int]
 ) -> tuple[list[dict[str, str]], dict[str, dict[str, Any]]]:
     items = parsed.get("items", []) if isinstance(parsed, dict) else []
     comments: list[dict[str, str]] = []
@@ -100,25 +122,32 @@ def _postprocess(
         if not text:
             continue
         stance = str(item.get("stance", "")).strip().lower()
-        grounding = str(item.get("grounding", "")).strip()
-        grounded = grounding in allowed
-        if stance == "strength" and not grounded:
-            continue  # never praise without grounding
         if stance not in {"strength", "weakness", "question"}:
             stance = "question"
-        if stance == "weakness" and not grounded:
-            stance = "question"  # ungroundable criticism becomes a question
-        label = {"strength": "Strength", "weakness": "Weakness", "question": "Question"}[stance]
-        citation = f" [{grounding}]" if grounded else ""
-        comments.append({"stance": stance, "text": f"{label} — {text}{citation}"})
+        grounding = str(item.get("grounding", "")).strip()
+        if stance == "strength":
+            if grounding not in allowed["strength"]:
+                continue  # never praise without a supported-claim citation
+            label, citation, final = "Strength", f" [{grounding}]", "strength"
+        elif stance == "weakness" and grounding in allowed["weakness"]:
+            label, citation, final = "Weakness", f" [{grounding}]", "weakness"
+        else:
+            # A weakness lacking defect-evidence — or any question — becomes a
+            # Question; cite only when the id is itself a checkable reference.
+            label, final = "Question", "question"
+            citation = f" [{grounding}]" if grounding in allowed["question"] else ""
+        comments.append({"stance": final, "text": f"{label} — {text}{citation}"})
 
     calibration: dict[str, dict[str, Any]] = {}
     raw = parsed.get("calibration", {}) if isinstance(parsed, dict) else {}
     for dimension, adjustment in (raw.items() if isinstance(raw, dict) else []):
         if dimension not in anchor_scores or not isinstance(adjustment, dict):
             continue
+        value_raw = adjustment.get("value")
+        if isinstance(value_raw, bool):  # bool is an int subclass — reject it
+            continue
         try:
-            value = int(adjustment.get("value"))
+            value = int(value_raw)
         except (TypeError, ValueError):
             continue
         if value < anchor_scores[dimension]:  # calibration only lowers
@@ -142,11 +171,7 @@ def critique(
 
     base_url = base_url or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL
     model = model or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL
-    allowed = (
-        set(grounding.get("finding_ids", []))
-        | set(grounding.get("claim_ids", []))
-        | set(grounding.get("arxiv_ids", []))
-    )
+    allowed = _allowed_sets(grounding)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": _user_prompt(sanitized_paper, grounding, anchor_scores)},
@@ -156,10 +181,21 @@ def critique(
     ).hexdigest()
     call = client or _default_client(base_url, api_key, model, max_tokens, timeout)
     try:
+        # Parse AND post-process inside the guard so a post-parse error (e.g. a
+        # malformed calibration payload) still degrades to empty, per the contract.
         parsed = json.loads(call(messages))
-    except (HTTPError, URLError, TimeoutError, OSError, ValueError, KeyError, TypeError):
+        comments, calibration = _postprocess(parsed, allowed, anchor_scores)
+    except (
+        HTTPError,
+        URLError,
+        TimeoutError,
+        OSError,
+        http.client.HTTPException,
+        ValueError,
+        KeyError,
+        TypeError,
+    ):
         return {"comments": [], "calibration": {}, "model": model, "prompt_sha256": prompt_sha256, "ok": False}
-    comments, calibration = _postprocess(parsed, allowed, anchor_scores)
     return {
         "comments": comments,
         "calibration": calibration,

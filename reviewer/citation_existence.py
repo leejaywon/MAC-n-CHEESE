@@ -7,6 +7,7 @@ findings: absence of a response is not evidence that a cited work is absent.
 
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import unicodedata
@@ -136,7 +137,20 @@ def _lookup(
             if provider == "arxiv"
             else _s2_lookup(identifier, fetch)
         )
-    except (HTTPError, URLError, TimeoutError, OSError, ValueError, ElementTree.ParseError) as error:
+    except (
+        HTTPError,
+        URLError,
+        TimeoutError,
+        OSError,
+        http.client.HTTPException,
+        ValueError,
+        TypeError,
+        ElementTree.ParseError,
+    ) as error:
+        # A truncated read (http.client.IncompleteRead / BadStatusLine) or a
+        # non-bytes payload must NOT crash the deterministic audit — absence of a
+        # response is never evidence a cited work is absent. HTTPException does not
+        # subclass OSError, so it has to be named explicitly.
         return {
             "schema_version": 1,
             "status": "unavailable",

@@ -56,12 +56,16 @@ _PUBLIC_COMMENT_SECTIONS = frozenset(
         "Questions for the Authors",
         "Scores",
         "Scientific Judgment (best mode)",
-        "Ethics and Limitations",
-        "Comment",
     }
 )
 _HEADING_RE = re.compile(r"(?m)^## (?P<title>[^\n]+)\n")
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}", re.I)
+_AUDIT_SUMMARY_RE = re.compile(
+    r"\s*Deterministic audit:[^\n]*?Overall recommendation:[^\n]*?(?:\.(?=\s|$)|$)"
+)
+_GENERIC_POSITIONING_RE = re.compile(
+    r"(?m)^- The paper situates its contribution against prior work[^\n]*\n?"
+)
 
 
 class ScoreMappingError(ValueError):
@@ -99,6 +103,9 @@ def public_comments(review_markdown: str) -> str:
         )
         selected.append(review_markdown[match.start() : end].strip())
     comments = "\n\n".join(selected).strip()
+    comments = _AUDIT_SUMMARY_RE.sub("", comments)
+    comments = _GENERIC_POSITIONING_RE.sub("", comments)
+    comments = re.sub(r"\n{3,}", "\n\n", comments).strip()
     return _DIGEST_RE.sub("[redacted-digest]", comments)
 
 

@@ -13,6 +13,7 @@ import unittest
 from reviewer.api_scores import (
     API_FIELDS,
     ScoreMappingError,
+    public_comments,
     to_api_review,
     validate_api_review,
 )
@@ -25,7 +26,10 @@ def _state(
     originality: int = 3,
     overall: int = 3,
     confidence: int = 3,
-    review_markdown: str = "A grounded, evidence-bound review body.",
+    review_markdown: str = (
+        "## Summary\n\nA grounded, evidence-bound review body.\n\n"
+        "## Comment\n\nThe assessment follows the cited evidence."
+    ),
 ) -> types.SimpleNamespace:
     """A minimal stand-in for ReviewState: only the fields the mapper reads."""
 
@@ -43,6 +47,36 @@ def _state(
 
 
 class MappingTests(unittest.TestCase):
+    def test_public_comments_keep_only_scientific_review_content(self) -> None:
+        review = (
+            "## Paper and Evidence Identity\n\n/private/path sha256:"
+            + "a" * 64
+            + "\n\n## Summary\n\nPaper-specific assessment. Deterministic audit: "
+            "0 contradiction(s), 0 finding(s); 99 unverifiable. Overall recommendation: "
+            "3/6 [claim-001].\n\n## Strengths\n\n"
+            "- A specific scientific strength. [paper:L1-L2]\n"
+            "- The paper situates its contribution against prior work (12 citation(s); "
+            "related-work section present).\n\n"
+            "## Ethics and Limitations\n\nInternal sanitation trace.\n\n"
+            "## Evidence Trace\n\nS1 parse -> S6 freeze.\n\n"
+            "## Comment\n\nDuplicate recommendation."
+        )
+
+        comments = public_comments(review)
+
+        self.assertIn("Paper-specific assessment.", comments)
+        self.assertIn("A specific scientific strength.", comments)
+        for private_text in (
+            "Deterministic audit:",
+            "situates its contribution",
+            "Ethics and Limitations",
+            "Evidence Trace",
+            "Comment",
+            "/private/path",
+            "sha256:",
+        ):
+            self.assertNotIn(private_text, comments)
+
     def test_happy_path_produces_only_plain_ints(self) -> None:
         review = to_api_review(_state(), ordinal=1)
         self.assertEqual(set(review), set(API_FIELDS))

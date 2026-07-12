@@ -38,6 +38,7 @@ from .scientific_review import build_evidence_packet, validate_judgment
 from .scientific_scaffolding import rigor_questions
 from .self_review_audit import check_self_review_consistency
 from .template_compliance import check_template_compliance
+from .to_markdown import PDF_VISIBILITY_POLICY
 
 
 STAGE_NAMES = (
@@ -299,12 +300,48 @@ def _validate_prepared_paper(requested_path: Path, prepared: PreparedPaper) -> N
         prepared.raw_text,
         original_path.name,
     )
+    trace_count = len(traces)
+    finding_count = len(findings)
+    text_traces = (
+        prepared.sanitation_traces[-trace_count:] if trace_count else ()
+    )
+    text_findings = (
+        prepared.injection_findings[-finding_count:] if finding_count else ()
+    )
+    visibility_traces = (
+        prepared.sanitation_traces[:-trace_count]
+        if trace_count
+        else prepared.sanitation_traces
+    )
+    visibility_findings = (
+        prepared.injection_findings[:-finding_count]
+        if finding_count
+        else prepared.injection_findings
+    )
     if (
         analysis_text != prepared.analysis_text
-        or traces != prepared.sanitation_traces
-        or findings != prepared.injection_findings
+        or traces != text_traces
+        or findings != text_findings
     ):
         raise ValueError("prepared sanitation records do not match the Markdown source")
+    if prepared.original.media_type == "text/markdown":
+        if visibility_traces or visibility_findings:
+            raise ValueError("Markdown preparation contains PDF visibility records")
+    elif (
+        len(visibility_traces) != len(visibility_findings)
+        or any(
+            trace.get("policy") != PDF_VISIBILITY_POLICY
+            or "page" not in trace.get("location", {})
+            for trace in visibility_traces
+        )
+        or any(
+            finding.get("check") != "injection-scan"
+            or finding.get("evidence_path") != original_path.name
+            or "page" not in finding.get("location", {})
+            for finding in visibility_findings
+        )
+    ):
+        raise ValueError("prepared PDF visibility records are malformed")
 
 
 def _freeze_inputs(state: ReviewState) -> ReviewState:
@@ -742,10 +779,15 @@ def _compose_review(state: ReviewState) -> str:
     # Closing reviewer comment (ICML-style), deterministic and always present.
     first_weakness = next((item["text"] for item in comments_by_section["Weaknesses"]), None)
     first_question = next((item["text"] for item in comments_by_section["Questions for the Authors"]), None)
-    if label_counts["contradicted"] or sr_dishonest or injection.get("findings"):
+    if label_counts["contradicted"] or sr_dishonest:
         verdict_note = (
-            "A proven integrity problem (a contradiction, concealed content, or a dishonest self-certification) is the "
+            "A proven integrity problem (a contradiction or dishonest self-certification) is the "
             "decisive factor and must be resolved before this paper can be accepted."
+        )
+    elif injection.get("findings"):
+        verdict_note = (
+            "Reviewer-directed concealed content was quarantined and reported "
+            "in Ethics; it did not affect the scientific assessment."
         )
     elif state.scientific_judgment is not None:
         if isinstance(overall_value, int) and overall_value >= 5:
@@ -975,11 +1017,6 @@ def _committee_inputs(
     ]
     finding_ids = [finding["id"] for finding in findings]
     claim_ids = [claim["id"] for claim in claims]
-    injection_ids = [
-        record["id"]
-        for record in state.finding_records
-        if record.get("check") == "injection-scan"
-    ]
     retrieved_prior_work: list[dict[str, Any]] = []
     arxiv_ids: list[str] = []
     for trace in (retrieval or {}).get("traces", []):
@@ -1001,7 +1038,11 @@ def _committee_inputs(
                 "mentioned_by_title": bool(trace.get("mentioned_by_title")),
             }
         )
-    integrity_ids = tuple([*all_contradicted_ids, *self_review_ids, *injection_ids])
+    # Injection findings stay redacted from model prompts and remain visible in
+    # the audit summary, but cannot cap scientific scores: all downstream analysis
+    # sees the sanitized twin, so scoring the hidden payload would violate the
+    # injection-invariance contract.
+    integrity_ids = tuple([*all_contradicted_ids, *self_review_ids])
     audit = {
         "audit_identity": state.review_identity,
         "summary": {
@@ -1199,9 +1240,21 @@ class ReviewPipeline:
 
     @staticmethod
     def _compose(state: ReviewState) -> ReviewState:
-        state.draft_comments = draft_comments(state.claims, state.verdicts, state.finding_records)
+        scientific_findings = [
+            finding
+            for finding in state.finding_records
+            if finding.get("check") != "injection-scan"
+        ]
+        state.draft_comments = draft_comments(
+            state.claims,
+            state.verdicts,
+            scientific_findings,
+        )
         state.grounding_audit = ground_comments(
-            state.draft_comments, state.claims, state.verdicts, state.finding_records
+            state.draft_comments,
+            state.claims,
+            state.verdicts,
+            scientific_findings,
         )
         state.grounded_comments = state.grounding_audit["comments"]
         sr_dishonest = len(state.mechanical_checks.get("self-review-audit", {}).get("findings", []))

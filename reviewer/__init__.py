@@ -9,6 +9,7 @@ from .mechanical_checks import check_arithmetic, check_internal_consistency, che
 from .injection_scan import check_injection_scan, sanitize_for_analysis
 from .negative_evidence import check_negative_evidence
 from .parser import parse_markdown
+from .positioning import check_positioning
 from .template_compliance import check_template_compliance
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "check_injection_scan",
     "check_ledger_trace",
     "check_negative_evidence",
+    "check_positioning",
     "check_template_compliance",
     "parse_markdown",
     "sanitize_for_analysis",

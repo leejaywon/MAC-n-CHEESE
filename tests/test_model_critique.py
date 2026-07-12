@@ -1,0 +1,107 @@
+"""Tests for the optional model critique (the --best judgment layer's model call).
+
+A canned client stands in for the network so grounding enforcement and
+calibration-only-lowers are verified deterministically: ungrounded praise is
+dropped, an ungrounded criticism becomes a question, a lowering is applied and a
+raise is refused, and malformed output degrades to empty.
+"""
+
+from __future__ import annotations
+
+import json
+import unittest
+
+from reviewer.model_critique import critique
+
+
+GROUNDING = {
+    "finding_ids": ["finding-001"],
+    "claim_ids": ["claim-001"],
+    "arxiv_ids": ["arxiv:1706.03762"],
+}
+ANCHORS = {"Soundness": 3, "Contribution": 2, "Overall recommendation": 4}
+
+
+def _client(response: dict):
+    def call(messages):
+        call.messages = messages
+        return json.dumps(response)
+
+    return call
+
+
+class ModelCritiqueTests(unittest.TestCase):
+    def _run(self, response: dict):
+        return critique(
+            sanitized_paper="A short sanitized paper about attention.",
+            grounding=GROUNDING,
+            anchor_scores=ANCHORS,
+            api_key="sk-test",
+            client=_client(response),
+        )
+
+    def test_grounding_is_enforced_regardless_of_model_output(self) -> None:
+        result = self._run(
+            {
+                "items": [
+                    {"stance": "weakness", "text": "Variance is unreported.", "grounding": "finding-001"},
+                    {"stance": "strength", "text": "Great idea.", "grounding": "not-an-id"},
+                    {"stance": "weakness", "text": "Vague worry.", "grounding": "not-an-id"},
+                    {"stance": "question", "text": "How does it differ?", "grounding": "arxiv:1706.03762"},
+                ],
+                "calibration": {},
+            }
+        )
+        texts = [comment["text"] for comment in result["comments"]]
+        # grounded weakness kept and cited
+        self.assertTrue(any("Weakness — Variance is unreported. [finding-001]" == text for text in texts))
+        # ungrounded praise dropped entirely
+        self.assertFalse(any("Great idea" in text for text in texts))
+        # ungrounded criticism demoted to a question, uncited
+        self.assertTrue(any(text == "Question — Vague worry." for text in texts))
+        # grounded question kept and cited
+        self.assertTrue(any("Question — How does it differ? [arxiv:1706.03762]" == text for text in texts))
+
+    def test_calibration_only_lowers(self) -> None:
+        result = self._run(
+            {
+                "items": [],
+                "calibration": {
+                    "Soundness": {"value": 1, "reason": "unproven headline"},
+                    "Contribution": {"value": 4, "reason": "over-generous"},
+                    "Overall recommendation": {"value": 4, "reason": "unchanged"},
+                },
+            }
+        )
+        # lowering applied
+        self.assertEqual(result["calibration"]["Soundness"]["value"], 1)
+        # a raise (4 > anchor 2) is refused
+        self.assertNotIn("Contribution", result["calibration"])
+        # an equal value (4 == anchor 4) is not a lowering
+        self.assertNotIn("Overall recommendation", result["calibration"])
+
+    def test_malformed_output_degrades_to_empty(self) -> None:
+        def bad_client(messages):
+            return "this is not json"
+
+        result = critique(
+            sanitized_paper="paper",
+            grounding=GROUNDING,
+            anchor_scores=ANCHORS,
+            api_key="sk-test",
+            client=bad_client,
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["comments"], [])
+        self.assertEqual(result["calibration"], {})
+        self.assertTrue(result["prompt_sha256"])  # still auditable
+
+    def test_prompt_records_model_and_hash(self) -> None:
+        result = self._run({"items": [], "calibration": {}})
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["model"])
+        self.assertEqual(len(result["prompt_sha256"]), 64)
+
+
+if __name__ == "__main__":
+    unittest.main()

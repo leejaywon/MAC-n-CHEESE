@@ -23,6 +23,8 @@ from reviewer.self_review_audit import check_self_review_consistency
 from reviewer.template_compliance import check_template_compliance
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
 PEER_PAPER = """# Instruction Position Bias in Few-Shot Prompting
 
 ## Abstract
@@ -61,6 +63,22 @@ class GeneralityTests(unittest.TestCase):
     def test_baseline_fairness_no_ops_without_a_ledger(self) -> None:
         parsed, directory = self._parse(PEER_PAPER)
         self.assertEqual(check_baseline_fairness(parsed, directory)["findings"], [])
+
+    def test_ledger_trace_no_ops_on_peer_paper_without_ledger(self) -> None:
+        # A peer paper reporting a metric-labelled number must not be flagged
+        # "absent from experiments.jsonl": with no ledger there is nothing to
+        # trace against. The real DDPM abstract ("Inception score of 9.46") broke
+        # this before the event_format guard, so it is the fixture here.
+        ddpm = ROOT / "eval/external/ddpm_denoising_diffusion.md"
+        if not ddpm.is_file():
+            self.skipTest("external corpus not fetched (run eval/fetch_external_corpus.py)")
+        parsed = parse_markdown(ddpm)
+        with tempfile.TemporaryDirectory() as empty:
+            # Confirm the fixture really does expose a traceable metric value, so
+            # this test cannot silently pass by extracting nothing.
+            self.assertTrue(check_ledger_trace(parsed, Path(empty), event_format=True)["findings"])
+            # Peer paper (event_format False) + no ledger -> no findings.
+            self.assertEqual(check_ledger_trace(parsed, Path(empty), event_format=False)["findings"], [])
 
     # --- P1: general checks must fire without the event's table format -------
 

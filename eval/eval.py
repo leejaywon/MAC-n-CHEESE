@@ -27,6 +27,7 @@ from reviewer import run_pipeline  # noqa: E402
 
 
 REQUIRED_REVIEW_MARKERS = (
+    "## Scores",
     "## Summary",
     "## Strengths",
     "## Weaknesses",
@@ -38,6 +39,7 @@ REQUIRED_REVIEW_MARKERS = (
     "- Confidence:",
     "## Ethics and Limitations",
     "## Evidence Trace",
+    "## Comment",
 )
 
 

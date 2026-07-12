@@ -4,3 +4,8 @@ wandb/
 __pycache__/
 *.py[cod]
 .DS_Store
+
+# Secrets — never commit real keys
+.env
+.env.local
+.env.*.local

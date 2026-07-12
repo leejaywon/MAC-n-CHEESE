@@ -12,6 +12,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .injection_scan import sanitize_for_analysis
+
 
 ATX_HEADING_RE = re.compile(r"^( {0,3})(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 SETEXT_HEADING_RE = re.compile(r"^ {0,3}(=+|-+)[ \t]*$")
@@ -308,16 +310,20 @@ def _extract_numbers(
     return numbers
 
 
-def parse_markdown(path: Path) -> dict[str, Any]:
+def parse_markdown(path: Path, *, text: str | None = None) -> dict[str, Any]:
     """Parse a UTF-8 Markdown paper into a JSON-serializable S1 document."""
 
     path = path.expanduser().resolve()
     if path.suffix.lower() not in {".md", ".markdown"}:
         raise ValueError(f"S1 Markdown parser does not support: {path.suffix or '<no suffix>'}")
-    try:
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as error:
-        raise ValueError(f"paper is not valid UTF-8 Markdown: {path}") from error
+    if text is None:
+        try:
+            raw_text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError(f"paper is not valid UTF-8 Markdown: {path}") from error
+        text = sanitize_for_analysis(raw_text)
+    elif not isinstance(text, str):
+        raise TypeError("analysis text must be a string")
 
     lines = text.splitlines(keepends=True)
     fenced = _fenced_lines(lines)
@@ -328,8 +334,18 @@ def parse_markdown(path: Path) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "source_path": str(path),
+        "analysis_text": text,
         "line_count": len(lines),
         "sections": sections,
         "tables": tables,
         "numeric_tokens": numbers,
     }
+
+
+def paper_text(parsed_paper: dict[str, Any]) -> str:
+    """Return the canonical sanitized text carried by parser output."""
+
+    text = parsed_paper.get("analysis_text")
+    if not isinstance(text, str):
+        raise ValueError("parsed paper does not contain canonical analysis_text")
+    return text

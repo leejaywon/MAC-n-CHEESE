@@ -7,14 +7,13 @@ import argparse
 import os
 from pathlib import Path
 
-from reviewer import run_pipeline
-from reviewer.to_markdown import convert_to_markdown
+from reviewer import prepare_paper, run_pipeline
 
 
 def _load_dotenv(path: Path) -> None:
     """Populate ``os.environ`` from a ``.env`` file for keys not already set.
 
-    Dependency-free so the optional ``--best`` layer can read ``OPENAI_API_KEY`` /
+    Dependency-free so the ``--best`` committee can read ``OPENAI_API_KEY`` /
     ``RALPH_BEST_RETRIEVAL`` from the gitignored ``.env`` a user copies from
     ``.env.example``. Exported shell variables always win; blank/comment/malformed
     lines are skipped. Audit mode never consults these, so this changes nothing
@@ -46,8 +45,8 @@ def _parser() -> argparse.ArgumentParser:
         default="audit",
         help=(
             "audit (default): deterministic, reproducible, injection-proof evidence "
-            "audit — the primary submission. best: audit plus the optional scientific "
-            "judgment layer (may call a model; never blocks a submission)."
+            "audit. best: audit plus three scientific specialists and one grounded "
+            "area-chair meta-review, with per-paper deterministic fallback."
         ),
     )
     return parser
@@ -57,10 +56,22 @@ def main() -> int:
     _load_dotenv(Path(__file__).resolve().parent / ".env")
     args = _parser().parse_args()
     try:
-        paper = convert_to_markdown(args.paper)
-        if paper != args.paper:
-            print(f"converted {args.paper} -> {paper}")
-        state = run_pipeline(paper, args.evidence_dir, args.out, mode=args.mode)
+        converted_path = (
+            args.out.parent / ".reviewer_sources" / f"{args.paper.stem}.md"
+            if args.paper.suffix.lower() == ".pdf"
+            else None
+        )
+        prepared = prepare_paper(args.paper, converted_path=converted_path)
+        markdown_path = Path(prepared.markdown.path)
+        if Path(prepared.original.path) != markdown_path:
+            print(f"converted {prepared.original.path} -> {markdown_path}")
+        state = run_pipeline(
+            args.paper,
+            args.evidence_dir,
+            args.out,
+            mode=args.mode,
+            prepared_paper=prepared,
+        )
     except (FileNotFoundError, NotADirectoryError, RuntimeError, ValueError) as error:
         _parser().error(str(error))
     print(f"wrote {state.output_path} [mode={state.mode}] ({', '.join(state.completed_stages)})")

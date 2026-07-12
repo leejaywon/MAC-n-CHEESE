@@ -3,11 +3,10 @@
 
 Each paper's review is fully independent, so N papers run in N parallel processes.
 The per-paper work is the deterministic S1–S6 pipeline plus, in ``--best`` mode,
-one bounded arXiv retrieval and one model call. Wall time is therefore bounded by
-the SLOWEST single review, not by the paper count: ten papers finish in about the
-time of one. This is the right tool for "review 10 papers under a deadline" — the
-reviewer is deterministic code, so parallel processes beat LLM subagents on speed,
-cost, and reproducibility.
+bounded arXiv retrieval, three concurrent specialist calls, and one area-chair
+meta-review. Wall time is therefore bounded by the slowest paper-level committee,
+not by the paper count. This is the right tool for reviewing ten papers under a
+deadline; deterministic audit state and per-paper fallback remain isolated.
 """
 
 from __future__ import annotations
@@ -19,8 +18,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from reviewer import run_pipeline
-from reviewer.to_markdown import convert_to_markdown
+from reviewer import prepare_paper, run_pipeline
 
 ROOT = Path(__file__).resolve().parent
 
@@ -40,13 +38,29 @@ def _review_one(job: tuple[str, str, str, str]) -> dict[str, object]:
     started = time.time()
     try:
         # A .pdf set member is converted to Markdown first (next to its review).
-        source = convert_to_markdown(Path(paper), Path(out_path).parent / f"{Path(paper).stem}.source.md")
-        state = run_pipeline(source, Path(evidence_dir), Path(out_path), mode=mode)
+        paper_path = Path(paper)
+        prepared = prepare_paper(
+            paper_path,
+            Path(out_path).parent / f"{paper_path.stem}.source.md",
+        )
+        state = run_pipeline(
+            paper_path,
+            Path(evidence_dir),
+            Path(out_path),
+            mode=mode,
+            prepared_paper=prepared,
+        )
+        scientific_status = (
+            "committee"
+            if getattr(state, "scientific_judgment", None) is not None
+            else ("fallback" if mode == "best" else "not_requested")
+        )
         return {
             "paper": Path(paper).name,
             "ok": True,
             "seconds": round(time.time() - started, 2),
             "scores": {name: score["value"] for name, score in state.scores.items()},
+            "scientific_status": scientific_status,
         }
     except Exception as error:  # noqa: BLE001 — one bad paper must not sink the batch
         return {"paper": Path(paper).name, "ok": False, "seconds": round(time.time() - started, 2), "error": repr(error)}
@@ -96,13 +110,17 @@ def main() -> int:
 
     ok = [result for result in results if result["ok"]]
     failed = [result for result in results if not result["ok"]]
+    committee = sum(result.get("scientific_status") == "committee" for result in ok)
+    fallback = sum(result.get("scientific_status") == "fallback" for result in ok)
     per_paper = [float(result["seconds"]) for result in results]
     print(f"batch: {len(ok)}/{len(results)} reviewed [mode={args.mode}, workers={args.workers}]")
+    if args.mode == "best":
+        print(f"scientific: committee={committee} fallback={fallback}")
     print(f"wall={wall:.2f}s  slowest-paper={max(per_paper):.2f}s  sum-serial={sum(per_paper):.2f}s")
     for result in results:
         if result["ok"]:
             overall = result["scores"].get("Overall recommendation", "?")
-            print(f"  ✓ {result['paper']:<44} {result['seconds']:>5.2f}s  overall={overall}/5")
+            print(f"  ✓ {result['paper']:<44} {result['seconds']:>5.2f}s  overall={overall}/6")
         else:
             print(f"  ✗ {result['paper']:<44} {result['seconds']:>5.2f}s  {result['error']}")
     return 1 if failed else 0

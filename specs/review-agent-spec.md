@@ -25,8 +25,10 @@ Design doctrine (from prior art):
    the official template.
 2. Review result per `track-2-review-template.md`, produced by running the agent
    on a frozen Track 1 paper. Required sections: Summary / Strengths / Weaknesses /
-   Questions / Scores (Soundness, Presentation, Contribution, Overall, Confidence —
-   **one evidence-backed rationale per score**) / Ethics & Limitations / Evidence Trace.
+   Questions / Scores (Soundness, Presentation, Significance, Originality,
+   Overall, Confidence — **one evidence-backed rationale per score**) / Ethics &
+   Limitations / Evidence Trace. Use the platform ranges directly: four
+   dimensions 1–4, Overall 1–6, Confidence 1–5.
 
 ## 3. Pipeline (implement as `reviewer/` Python package, venv, no GPU)
 
@@ -41,15 +43,18 @@ run_review.py <paper.md|pdf> <evidence_dir> --out review.md
                   (b) GROUND — strong pass maps every sentence to a finding/claim id;
                       ungroundable praise deleted, ungroundable criticism → Questions
                   every score cites S3/S4 output; per-comment confidence level (DeepReview)
-  S6 freeze     : record paper hash, evidence hashes, agent version, timestamp;
+  S6 freeze     : record original/derived paper identities, evidence hashes,
+                  external citation snapshot digest, agent version, timestamp;
                   identical rerun on same hash must yield same verdict labels
 ```
 
 Modes (`run_review.py --mode`): `audit` (DEFAULT) = the full deterministic
 S1–S6 pipeline above, fully reproducible and injection-proof — this is the
-primary submission. `best` = `audit` plus the optional scientific judgment layer
-(§4c); it is a BONUS and may call a model, so it never gates a submission. If the
-judgment layer is unbuilt or a model is unavailable, `best` output equals `audit`.
+fallback contract. `best` = `audit` plus the scientific committee (§4c) and is
+the live-review mode when a model key is configured. It runs specialist calls
+and a grounded meta-review but never gates a submission.
+If the committee is unavailable or invalid, that paper falls back to its
+complete `audit` review.
 
 ## 4. Mechanical check battery (S3) — the moat
 
@@ -89,41 +94,49 @@ judgment-heavy critiques (a NAMED causal confound, real positioning against the
 specific literature, novelty/significance) require reasoning and live in §4c,
 off by default.
 
-## 4c. Judgment layer — optional, `--best` only (the loop builds this)
+## 4c. Scientific committee — `--best` only
 
-Default `audit` mode is fully deterministic and is the primary submission.
-`best` mode adds a scientific judgment layer for what machines cannot verify
-(novelty, significance, a named causal confound, positioning against the actual
-literature). It is a BONUS, never a dependency: if unbuilt or the model is
-unavailable, `audit` output stands unchanged.
+Default `audit` mode is fully deterministic and is the primary fallback.
+`best` mode assesses what mechanical checks cannot: problem–method fit,
+claim–experiment alignment, experimental validity, scope/generalization,
+design-choice and ablation justification, novelty, and significance.
 
-Mechanism (leverages published prior art directly):
-- **Grounded two-pass** (ReviewGrounder, arXiv 2604.14261): a DRAFT model
-  proposes critique; a GROUND pass maps every sentence to an S3 finding / S4
-  verdict / ledger id. Any quantitative statement is re-checked against S3;
-  ungroundable praise is deleted; ungroundable criticism → Questions. The S3
-  battery IS the tool the grounder calls — same contract as §5's offline pass.
-- **Multi-persona** (DeepReviewer): harsh-theorist / empiricist / reproducibility
-  -cop drafts merged by an AC meta-review. Personas add coverage, not authority;
-  grounding still gates every sentence.
-- **Calibration** (OpenReviewer: LLMs are too positive): the judgment layer may
-  only LOWER scores from the deterministic borderline anchor, never inflate them.
+Mechanism:
+- **Three real specialist calls:** a theorist assesses assumptions and logical
+  method fit; an experimentalist assesses claims, controls, baselines,
+  confounds, and statistics; a scope/ablation reviewer assesses generalization,
+  design choices, limitations, and missing ablations. Calls run concurrently
+  over role-targeted sanitized evidence.
+- **Area-chair meta-review:** when at least two specialists succeed, a fourth
+  call reconciles their structured outputs against deterministic S3/S4 facts
+  and stable paper-span IDs. It emits every required scientific axis, grounded
+  strengths/weaknesses, three to five questions, and all six scores.
+- **Validation and merge:** unknown grounding IDs, missing axes, malformed
+  scores, or score–text contradictions reject the committee result. Validated
+  content is merged into the official review sections, not an appendix.
+- **Calibration:** validated scientific scores may move above or below the
+  deterministic anchor. Proven integrity breaches still cap Soundness and
+  Overall at 2.
 
-Hard rules for the judgment layer (violating any = revert):
-- Input to any model is the SANITIZED paper text (injection-scan output) only.
-  Hidden instructions never reach the model, so injection resistance is preserved.
-- Temperature 0 + fixed seed; record model id + prompt hash in the freeze block.
-  The S4 verdict-label digest (audit determinism contract) is unaffected —
-  judgment prose is additive and lives in its own section.
-- Quota-aware: ONE bounded model-call budget per review; on any error, fall back
-  to audit output and note it. Never blocks a submission. Shares the loop's Codex
-  quota, so treat it as expensive and gate on confirmed API-key + credit.
+Hard rules for the committee (violating any = per-paper fallback):
+- Every model receives SANITIZED paper spans only. Hidden instructions never
+  reach a model.
+- Temperature 0 + fixed seed; record each role's model, prompt hash, response
+  hash, outcome, and aggregate `judgment_identity`.
+- The S4 verdict-label digest remains unaffected; committee content is merged
+  only after the deterministic audit is frozen.
+- Each call is bounded. One specialist may fail; fewer than two successful
+  specialists or any invalid meta-review triggers fallback. A committee failure
+  never blocks other assignments or submission.
 
 ## 5. Scoring calibration
 
 - Known LLM-reviewer bias: too positive (OpenReviewer finding). Anchor rubric:
-  Overall starts at borderline; move up only on `supported` headline claims,
-  down on `contradicted` findings. Confidence tied to fraction of claims verifiable.
+  no supported headline result caps Overall at 3; one clean supported result
+  permits 4; multiple supported results plus adequate presentation permit 5;
+  deterministic audit never emits 6; integrity breaches cap Overall at 2.
+  Confidence uses verified result coverage, extraction quality, and positioning
+  coverage.
 - Rationale for each score MUST quote a finding id or claim id.
 
 ## 6. Eval harness (`eval/eval.py`) — the loop's backpressure

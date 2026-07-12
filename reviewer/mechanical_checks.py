@@ -16,6 +16,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable
 
+from .parser import paper_text
+
 
 DEFAULT_METRIC_FIELDS = (
     "val_bpb",
@@ -635,8 +637,7 @@ def check_arithmetic(parsed_paper: dict[str, Any]) -> dict[str, Any]:
 
     pairs = _table_comparison_pairs(parsed_paper)
     mean_pairs = _table_mean_comparison_pairs(parsed_paper)
-    source = Path(str(parsed_paper["source_path"]))
-    lines = source.read_text(encoding="utf-8").splitlines()
+    lines = paper_text(parsed_paper).splitlines()
     traces: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
 

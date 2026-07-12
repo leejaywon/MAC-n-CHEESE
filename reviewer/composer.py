@@ -188,6 +188,24 @@ def calibrate_scores(
         finding for finding in (findings or []) if finding.get("check") == "template-compliance"
     ]
 
+    # Grounded uplift signals: every score above the borderline must be EARNED by
+    # evidence, never awarded by default. This keeps the "no fabricated praise"
+    # property while letting a strong, clean, well-situated paper reach the top of
+    # each scale (so scores correlate with human judges instead of hitting an
+    # artificial ceiling).
+    signals = (positioning or {}).get("signals", {})
+    positioned = bool(signals.get("positioned"))
+    situated_novelty = positioned and signals.get("novelty_claim_count", 0) > 0
+    # Injection-scan findings are a security/ethics signal about hidden
+    # reviewer-directed instructions, not a scientific defect, so they must not
+    # move the scientific scores — otherwise an injection twin would score
+    # differently from its sanitized-identical clean counterpart.
+    scientific_findings = [
+        finding for finding in (findings or []) if finding.get("check") != "injection-scan"
+    ]
+    clean_run = not scientific_findings  # zero proven scientific findings
+    strong_support = len(headline_supported) >= 2
+
     breach_count = len(contradicted) + self_review_dishonest
     integrity_breach = breach_count > 0
     if integrity_breach:
@@ -197,6 +215,12 @@ def calibrate_scores(
             f"{self_review_dishonest} dishonest self-certification(s)) undermines soundness "
             f"[{contradicted_anchor}]."
         )
+    elif headline_supported and clean_run and strong_support:
+        soundness = 4
+        soundness_reason = (
+            f"Multiple headline results have direct mechanical support and no finding was proven "
+            f"[{supported_anchor}]."
+        )
     elif headline_supported:
         soundness = 3
         soundness_reason = f"At least one headline result has direct mechanical support [{supported_anchor}]."
@@ -204,16 +228,23 @@ def calibrate_scores(
         soundness = 2
         soundness_reason = f"No headline result has mechanical support, but none is contradicted [{anchor}]."
 
-    # Passing the structural audit alone does not establish clear writing, so
-    # it cannot promote presentation above borderline. Proven violations do
-    # demote it, while an unknown Markdown page count is kept unverifiable.
-    presentation = 1 if template_findings else 2
+    # A proven template violation demotes presentation; a clean structural audit on
+    # a paper that also situates itself against cited prior work reads as a
+    # well-formed submission and earns above the borderline.
     if template_findings:
+        presentation = 1
         presentation_reason = (
             f"A deterministic template violation lowers presentation [{template_findings[0]['id']}]; "
             f"the claim inventory begins at [{anchor}]."
         )
+    elif positioned:
+        presentation = 3
+        presentation_reason = (
+            f"The structural audit found no violation and the paper situates itself against cited "
+            f"prior work [{anchor}]."
+        )
     else:
+        presentation = 2
         presentation_reason = (
             f"The structural template audit found no proven violation, but structure alone does not "
             f"establish clear presentation [{anchor}]."
@@ -229,6 +260,12 @@ def calibrate_scores(
             f"A novelty/SOTA claim at paper line {overclaim['location']['line']} is situated against "
             f"no cited prior work, so the contribution is not established [{anchor}]."
         )
+    elif situated_novelty:
+        contribution = 3
+        contribution_reason = (
+            f"The paper makes a novelty claim situated against cited prior work — a contribution "
+            f"beyond mere result support [{anchor}]."
+        )
     else:
         contribution = 2
         contribution_reason = (
@@ -242,6 +279,12 @@ def calibrate_scores(
             f"A proven integrity breach ({breach_count} issue(s)) drives a reject recommendation; "
             f"supported results do not offset it [{contradicted_anchor}]."
         )
+    elif headline_supported and clean_run and situated_novelty and strong_support:
+        overall = 5
+        overall_reason = (
+            f"Multiple supported headline results, a situated contribution, and no proven finding "
+            f"support a strong accept [{supported_anchor}]."
+        )
     elif headline_supported:
         overall = 4
         overall_reason = f"A supported headline result with no proven contradiction supports acceptance [{supported_anchor}]."
@@ -250,11 +293,16 @@ def calibrate_scores(
         overall_reason = f"The recommendation remains borderline without a supported headline claim [{anchor}]."
     overall = max(1, min(5, overall))
 
-    fraction = len(verifiable) / len(claims) if claims else 0.0
-    confidence = max(1, min(5, 1 + round(4 * fraction)))
+    # Confidence is the reviewer's CERTAINTY in this review, driven by how much of
+    # it rests on mechanically proven evidence (S3 findings + verified verdicts)
+    # rather than unverifiable prose. A bare manuscript with nothing to check is
+    # low confidence; a review anchored in proven findings/verdicts is high.
+    proven = len(scientific_findings) + len(verifiable)
+    coverage = min(1.0, proven / len(claims)) if claims else 0.0
+    confidence = max(1, min(5, 1 + round(4 * coverage)))
     confidence_reason = (
-        f"{len(verifiable)}/{len(claims)} extracted claims are mechanically verifiable; "
-        f"the inventory begins at [{anchor}]."
+        f"Review certainty reflects mechanical coverage: {len(scientific_findings)} proven finding(s) and "
+        f"{len(verifiable)}/{len(claims)} verifiable claim(s) anchor the assessment [{anchor}]."
     )
 
     return {

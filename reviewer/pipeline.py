@@ -313,13 +313,37 @@ def _compose_review(state: ReviewState) -> str:
         label: sum(verdict["label"] == label for verdict in state.verdicts)
         for label in ("supported", "contradicted", "unverifiable")
     }
-    evidence_trace_lines = "\n".join(
-        f"- [{claim['id']}] **{verdict_by_claim[claim['id']]['label']}** — "
-        f"paper:{claim['location']['line']} — {claim['text']} — "
-        f"{verdict_by_claim[claim['id']]['reason']} Evidence: "
-        f"{', '.join(f'`{pointer}`' for pointer in verdict_by_claim[claim['id']]['evidence'])}."
-        for claim in state.claims
-    ) or "- No declarative claims were extracted."
+    def _trace_line(claim: dict[str, Any]) -> str:
+        verdict = verdict_by_claim[claim["id"]]
+        pointers = ", ".join(f"`{pointer}`" for pointer in verdict["evidence"]) or "none"
+        return (
+            f"- [{claim['id']}] **{verdict['label']}** — paper:{claim['location']['line']} — "
+            f"{claim['text']} — {verdict['reason']} Evidence: {pointers}."
+        )
+
+    # The trace prioritizes what a reader needs — every verified (supported /
+    # contradicted) claim and every substantive unverifiable claim (result /
+    # arithmetic / hypothesis) — capped, then summarizes the remaining generic
+    # prose as a count instead of dumping hundreds of lines.
+    TRACE_CAP = 30
+    verified = [
+        claim for claim in state.claims
+        if verdict_by_claim[claim["id"]]["label"] in {"supported", "contradicted"}
+    ]
+    substantive_unverifiable = [
+        claim for claim in state.claims
+        if verdict_by_claim[claim["id"]]["label"] == "unverifiable"
+        and claim.get("type") in {"result", "arithmetic", "hypothesis"}
+    ]
+    shown = (verified + substantive_unverifiable)[:TRACE_CAP]
+    omitted = len(state.claims) - len(shown)
+    trace_body = "\n".join(_trace_line(claim) for claim in shown)
+    if omitted > 0:
+        trace_body += (
+            f"\n- (+{omitted} further extracted claim(s) — mostly unverifiable prose — omitted here for "
+            f"brevity; all are labelled in S2/S4 with source lines.)"
+        )
+    evidence_trace_lines = trace_body or "- No declarative claims were extracted."
     comments_by_section: dict[str, list[dict[str, Any]]] = {
         "Strengths": [],
         "Weaknesses": [],

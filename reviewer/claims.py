@@ -106,6 +106,16 @@ def _sentence_spans(line: str) -> list[tuple[str, int, int]]:
     return spans
 
 
+def _is_junk_claim(text: str) -> bool:
+    """A parser fragment that is not a research claim: a table-row remnant (many
+    pipes) or a too-short non-sentence (e.g. "4. Sect.", "conv3-64")."""
+
+    stripped = text.strip()
+    if stripped.count("|") >= 2:
+        return True
+    return len(re.findall(r"[A-Za-z]{2,}", stripped)) < 3
+
+
 def extract_claims(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract declarative prose and result-table rows with stable locations."""
 
@@ -164,8 +174,8 @@ def extract_claims(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
 
         checkbox = bool(CHECKBOX_RE.match(line))
         for text, column_start, column_end in _sentence_spans(line):
-            if CITATION_ONLY_RE.match(text.strip()):
-                continue  # a bare reference link is not a claim
+            if CITATION_ONLY_RE.match(text.strip()) or _is_junk_claim(text):
+                continue  # a bare reference link or parser fragment is not a claim
             numbers = [
                 token
                 for token in _numbers_on_line(parsed_paper, line_number)

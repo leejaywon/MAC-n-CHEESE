@@ -304,12 +304,22 @@ def calibrate_scores(
     # it rests on mechanically proven evidence (S3 findings + verified verdicts)
     # rather than unverifiable prose. A bare manuscript with nothing to check is
     # low confidence; a review anchored in proven findings/verdicts is high.
-    proven = len(scientific_findings) + len(verifiable)
-    coverage = min(1.0, proven / len(claims)) if claims else 0.0
-    confidence = max(1, min(5, 1 + round(4 * coverage)))
+    # Confidence = the reviewer's CERTAINTY, from how much of the assessment rests
+    # on signals the reviewer could actually check — verified/contradicted claims,
+    # proven findings, a positioning judgment, and concrete reported results — not
+    # result verification alone. So a well-analysed peer paper without an evidence
+    # bundle is not stuck reporting 1/5, while an opaque paper stays low.
+    checkable = (
+        (1 if verifiable else 0)
+        + (1 if scientific_findings else 0)
+        + (1 if positioned else 0)
+        + (1 if has_results else 0)
+    )
+    confidence = max(2, min(5, 1 + checkable))
     confidence_reason = (
-        f"Review certainty reflects mechanical coverage: {len(scientific_findings)} proven finding(s) and "
-        f"{len(verifiable)}/{len(claims)} verifiable claim(s) anchor the assessment [{anchor}]."
+        f"Certainty rests on {len(verifiable)} verified claim(s), {len(scientific_findings)} proven "
+        f"finding(s), positioning {'assessed' if positioned else 'unavailable'}, and "
+        f"{'concrete' if has_results else 'no'} reported results [{anchor}]."
     )
 
     return {

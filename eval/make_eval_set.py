@@ -34,15 +34,25 @@ class Case:
     twin_of: str | None = None
     confirmation: str | None = None
     invalid_confirmation: bool = False
+    baseline_runs: tuple[str, ...] = ()
+    candidate_runs: tuple[str, ...] = ()
 
 
 def _paper(case: Case) -> tuple[str, dict[str, object] | None]:
     lower_is_better = case.metric in {"val_bpb", "loss", "perplexity"}
     direction = "lowers" if lower_is_better else "raises"
-    rows = (
-        f"| baseline | keep | {case.baseline} |\n"
-        f"| candidate-1 | keep | {case.candidate} |"
-    )
+    if case.baseline_runs or case.candidate_runs:
+        if len(case.baseline_runs) < 2 or len(case.candidate_runs) < 2:
+            raise ValueError("multi-run cases require at least two runs per system")
+        rows = "\n".join(
+            [f"| baseline | keep | {value} |" for value in case.baseline_runs]
+            + [f"| candidate-1 | keep | {value} |" for value in case.candidate_runs]
+        )
+    else:
+        rows = (
+            f"| baseline | keep | {case.baseline} |\n"
+            f"| candidate-1 | keep | {case.candidate} |"
+        )
     text = f"""# Frozen Track 1 Paper: {case.name}
 
 ## Research Spec
@@ -173,6 +183,21 @@ CASES = (
         expected_checks=("arithmetic",),
         description="The reported percentage improvement is not recomputable from the table.",
     ),
+    # M10a hardening: neither individual run pair yields the reported delta.
+    # The reviewer must first average each system's repeated runs, then compare
+    # those means. This stays within the arithmetic check's deterministic reach.
+    Case(
+        name="corrupt_mean_then_delta",
+        metric="accuracy",
+        baseline="71.0",
+        candidate="75.0",
+        baseline_runs=("70.0", "72.0"),
+        candidate_runs=("74.0", "76.0"),
+        claim="Averaging the two runs per system, the absolute delta is 4.0.",
+        replacement="Averaging the two runs per system, the absolute delta is 5.0.",
+        expected_checks=("arithmetic",),
+        description="The reported delta does not equal the candidate-run mean minus the baseline-run mean.",
+    ),
     # Generality: a self-contained prose ratio ("from A to B, a gain of Z%") that
     # carries no trial word, so it exercises the general prose-ratio arithmetic
     # check (P1b) rather than the event's baseline/candidate table pairing.
@@ -239,10 +264,19 @@ CASES = (
 def _write_ledger(case: Case) -> None:
     case_dir = EVIDENCE_DIR / case.name
     case_dir.mkdir(parents=True, exist_ok=True)
-    records = [
-        {"trial": "baseline", "status": "keep", case.metric: float(case.baseline)},
-        {"trial": "candidate-1", "status": "keep", case.metric: float(case.candidate)},
-    ]
+    if case.baseline_runs or case.candidate_runs:
+        records = [
+            {"trial": "baseline", "status": "keep", case.metric: float(value)}
+            for value in case.baseline_runs
+        ] + [
+            {"trial": "candidate-1", "status": "keep", case.metric: float(value)}
+            for value in case.candidate_runs
+        ]
+    else:
+        records = [
+            {"trial": "baseline", "status": "keep", case.metric: float(case.baseline)},
+            {"trial": "candidate-1", "status": "keep", case.metric: float(case.candidate)},
+        ]
     if case.confirmation is not None:
         records.append(
             {"trial": "winner-confirmation", "status": "keep", case.metric: float(case.confirmation)}

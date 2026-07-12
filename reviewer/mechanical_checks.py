@@ -540,6 +540,51 @@ def _table_comparison_pairs(parsed_paper: dict[str, Any]) -> dict[str, tuple[dic
     return pairs
 
 
+def _table_mean_comparison_pairs(
+    parsed_paper: dict[str, Any],
+) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
+    """Aggregate repeated baseline/candidate rows for explicit mean claims.
+
+    Repeated rows make a direct baseline/candidate pairing ambiguous, but an
+    explicit prose cue such as "averaging the runs" supplies a deterministic
+    operation: compute each group mean and then compare those means. Requiring
+    at least two observations in both groups prevents this path from silently
+    changing the semantics of ordinary one-row result tables.
+    """
+
+    values = [value for value in _result_values(parsed_paper) if value["source"] == "table"]
+    pairs: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for metric in sorted({value["metric"] for value in values}):
+        baseline = [
+            value
+            for value in values
+            if value["metric"] == metric and value["trial"] == "baseline"
+        ]
+        candidates = [
+            value
+            for value in values
+            if value["metric"] == metric
+            and str(value["trial"] or "").startswith("candidate")
+        ]
+        if len(baseline) < 2 or len(candidates) < 2:
+            continue
+
+        def aggregate(group: list[dict[str, Any]], trial: str) -> dict[str, Any]:
+            mean = sum((value["value"] for value in group), Decimal(0)) / len(group)
+            return {
+                "metric": metric,
+                "trial": trial,
+                "value": mean,
+                "display": str(mean),
+                "location": group[0]["location"],
+                "locations": [value["location"] for value in group],
+                "count": len(group),
+            }
+
+        pairs[metric] = (aggregate(baseline, "baseline"), aggregate(candidates, "candidate"))
+    return pairs
+
+
 def _lower_is_better(parsed_paper: dict[str, Any], metric: str) -> bool | None:
     metric_alias = re.escape(metric).replace("_", r"[ _-]")
     text = "\n".join(str(section.get("content", "")) for section in parsed_paper.get("sections", []))
@@ -589,6 +634,7 @@ def check_arithmetic(parsed_paper: dict[str, Any]) -> dict[str, Any]:
     """Recompute explicit delta/change claims from unambiguous table operands."""
 
     pairs = _table_comparison_pairs(parsed_paper)
+    mean_pairs = _table_mean_comparison_pairs(parsed_paper)
     source = Path(str(parsed_paper["source_path"]))
     lines = source.read_text(encoding="utf-8").splitlines()
     traces: list[dict[str, Any]] = []
@@ -610,6 +656,10 @@ def check_arithmetic(parsed_paper: dict[str, Any]) -> dict[str, Any]:
             # A single metric pair is safe. With multiple pairs, require the
             # metric name in the same sentence instead of silently choosing.
             eligible = list(pairs.items())
+            uses_group_means = False
+            if not eligible and re.search(r"\b(?:averag(?:e|ed|es|ing)|mean)\b", line, re.I):
+                eligible = list(mean_pairs.items())
+                uses_group_means = True
             if len(eligible) > 1:
                 eligible = [item for item in eligible if any(alias in line.lower() for alias in _metric_aliases(item[0]))]
             if len(eligible) != 1:
@@ -618,7 +668,11 @@ def check_arithmetic(parsed_paper: dict[str, Any]) -> dict[str, Any]:
             baseline_value = baseline["value"]
             candidate_value = candidate["value"]
             expected = candidate_value - baseline_value
-            formula = "candidate - baseline"
+            formula = (
+                "mean(candidate runs) - mean(baseline runs)"
+                if uses_group_means
+                else "candidate - baseline"
+            )
             if is_relative:
                 if baseline_value == 0:
                     continue
@@ -663,7 +717,9 @@ def check_arithmetic(parsed_paper: dict[str, Any]) -> dict[str, Any]:
                         expected=f"{expected} from {formula} using baseline={baseline_value}, candidate={candidate_value}",
                         observed=f"paper reports {match.group('value').strip()}",
                         evidence_path=(
-                            f"paper table locations {baseline['location']} and {candidate['location']}"
+                            "paper table locations "
+                            f"{baseline.get('locations', [baseline['location']])} and "
+                            f"{candidate.get('locations', [candidate['location']])}"
                         ),
                     )
                 )

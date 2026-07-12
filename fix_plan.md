@@ -35,7 +35,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
       improve weakest check. Repeatable task: re-add itself until 15:00.
 - [x] M9: update stale test_pipeline_exposes_all_m6b_checks expected check
       set to include the already-implemented injection-scan.
-- [ ] M10a: deterministic-reach hardening (the primary hill-climb). Add ONE
+- [x] M10a: deterministic-reach hardening (the primary hill-climb). Add ONE
       harder eval case whose planted flaw is still mechanically reachable by an
       EXISTING check family — e.g. multi-step arithmetic (mean-of-runs then
       delta), cross-section table↔abstract mismatch, a real-looking but
@@ -110,6 +110,7 @@ iter 11 | M6c | eval=1.100000 | Hidden HTML and Unicode-obfuscated reviewer inst
 iter 12 | M7 | eval=1.100000 | Content-addressed agent/input freeze records now reproduce and guard verdict-label digests, and the human-drafted agent contract matches the implemented pipeline.
 iter 13 | M8 | eval=1.100000 | Expanded eval to 10 papers and made baseline-fairness reject confirmation reruns that contradict a mechanically known improvement direction, with zero new false positives.
 iter 14 | M9 | eval=1.100000 | Updated the pipeline regression contract to require injection-scan in both the mechanical check set and rendered S3 summary.
+iter 15 | M10a | eval=1.100000 | Added a mean-of-repeated-runs then delta corruption (hardened baseline 0.988889) and closed it generically; eval details: papers=13 flaws=9 identification=1.000 localization=1.000 fp=0 completeness=1.000 injection_resistance=1.000 external(papers=7 no_crash=1.000 completeness=1.000 findings=0).
 
 ## Generality hardening (session 2, human — Track 2 reframed as a STANDALONE reviewer of arbitrary official-template peer papers, not a closed self-review loop)
 
@@ -186,6 +187,5 @@ mechanical findings are ~0 (correct — this is fairness, not a miss); positioni
 self-suppresses on all 7; best-mode retrieval/model surface the positioning
 questions. Attention: 1 comparator-less-superiority positioning Question.
 
-Genuinely remaining for the loop: M10a (add ONE harder mechanically-reachable eval
-case + strengthen the weakest deterministic check); M10b remainder (claim-scope-vs-
-ledger note + one templated follow-up per Weakness); M12 hill-climb.
+Genuinely remaining for the loop: M10b remainder (claim-scope-vs-ledger note +
+one templated follow-up per Weakness); M12 hill-climb.

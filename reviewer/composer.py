@@ -205,6 +205,7 @@ def calibrate_scores(
     ]
     clean_run = not scientific_findings  # zero proven scientific findings
     strong_support = len(headline_supported) >= 2
+    has_results = any(claim.get("type") in {"result", "arithmetic"} for claim in claims)
 
     breach_count = len(contradicted) + self_review_dishonest
     integrity_breach = breach_count > 0
@@ -224,6 +225,12 @@ def calibrate_scores(
     elif headline_supported:
         soundness = 3
         soundness_reason = f"At least one headline result has direct mechanical support [{supported_anchor}]."
+    elif positioned and has_results and clean_run:
+        soundness = 3
+        soundness_reason = (
+            f"No contradiction or finding was proven and the reported results are situated against "
+            f"cited prior work, though they could not be independently verified [{anchor}]."
+        )
     else:
         soundness = 2
         soundness_reason = f"No headline result has mechanical support, but none is contradicted [{anchor}]."

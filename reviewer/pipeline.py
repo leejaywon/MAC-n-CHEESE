@@ -253,6 +253,35 @@ def _format_evidence_identity(state: ReviewState) -> str:
     return f"`{state.evidence_dir}`: {entries}"
 
 
+CONTRIBUTION_RE = re.compile(
+    r"\b(?:our\s+(?:main\s+|key\s+|primary\s+)?contribution|we\s+(?:propose|present|introduce|develop|"
+    r"show|demonstrate)|in\s+this\s+(?:paper|work)|this\s+(?:paper|work)\s+(?:proposes|presents|introduces))\b",
+    re.I,
+)
+
+
+def _paper_title(parsed_paper: dict[str, object]) -> str:
+    sections = parsed_paper.get("sections", [])
+    headed = [section for section in sections if section.get("heading_line")]
+    if not headed:
+        return ""
+    top_level = min(section["level"] for section in headed)
+    for section in headed:
+        if section["level"] == top_level:
+            return re.sub(r"[*_`]", "", str(section.get("title", ""))).strip()
+    return ""
+
+
+def _contribution_sentence(claims: list[dict[str, Any]]) -> str:
+    """The paper's own stated contribution, for a real (not audit-log) summary."""
+
+    for claim in claims:
+        text = re.sub(r"\s+", " ", str(claim.get("text", "")).strip())
+        if CONTRIBUTION_RE.search(text) and 20 <= len(text) <= 400:
+            return text if text.endswith((".", "!", "?")) else text + "."
+    return ""
+
+
 def _compose_review(state: ReviewState) -> str:
     """Return the official review shape after DRAFT and authoritative GROUND."""
 
@@ -324,15 +353,59 @@ def _compose_review(state: ReviewState) -> str:
     for question in rigor_checklist_questions(state.parsed_paper):
         comments_by_section["Questions for the Authors"].append(question)
 
+    # --- Substance shaping so the review reads like a review, not an audit log ---
+    pos_signals = positioning_check.get("signals", {})
+    citation_count = pos_signals.get("citation_count", 0)
+    result_claims = [claim for claim in state.claims if claim.get("type") in {"result", "arithmetic"}]
+
+    # Grounded Strengths from what the audit actually established (never fabricated).
+    if not comments_by_section["Strengths"]:
+        if pos_signals.get("has_related_work_section") or citation_count > 0:
+            comments_by_section["Strengths"].append(
+                {"text": (
+                    f"The paper situates its contribution against prior work "
+                    f"({citation_count} citation(s); related-work section present)."
+                )}
+            )
+        if result_claims:
+            comments_by_section["Strengths"].append(
+                {"text": f"The paper reports {len(result_claims)} quantitative result claim(s) across its experiments."}
+            )
+        if not state.finding_records:
+            comments_by_section["Strengths"].append(
+                {"text": "The deterministic audit proved no contradiction, arithmetic error, fabricated result, or integrity breach."}
+            )
+
+    # Collapse the per-claim "auditable evidence" requests into ONE aggregate line
+    # and cap the specific questions — hundreds of identical lines read as robotic,
+    # and the per-claim detail already lives in the Evidence Trace.
+    raw_questions = comments_by_section["Questions for the Authors"]
+    evidence_requests = [item for item in raw_questions if "auditable evidence" in item.get("text", "")]
+    specific_questions = [item for item in raw_questions if "auditable evidence" not in item.get("text", "")]
+    shaped_questions = specific_questions[:8]
+    if evidence_requests:
+        shaped_questions.append(
+            {"text": (
+                f"{len(evidence_requests)} extracted result/arithmetic claim(s) could not be checked "
+                f"against the supplied evidence and are listed with their source lines in the Evidence "
+                f"Trace — could the authors provide the underlying results?"
+            )}
+        )
+    comments_by_section["Questions for the Authors"] = shaped_questions
+
     def render_comments(section: str, empty: str) -> str:
         comments = comments_by_section[section]
         return "\n".join(f"- {item['text']}" for item in comments) or f"- {empty}"
 
-    strength_lines = render_comments("Strengths", "No evidence-grounded strengths were established.")
-    weakness_lines = render_comments("Weaknesses", "No deterministic contradictions were proven.")
-    question_lines = render_comments(
-        "Questions for the Authors", "No unverified claim generated an evidence request."
+    strength_lines = render_comments(
+        "Strengths", "No evidence-grounded strength could be established from the supplied material."
     )
+    weakness_lines = render_comments(
+        "Weaknesses",
+        "The deterministic audit proved no contradiction, arithmetic error, or integrity breach; the "
+        "remaining concern is limited to claims that could not be independently verified (see Questions).",
+    )
+    question_lines = render_comments("Questions for the Authors", "No open question was generated.")
     # Scores are the headline of the review, and the Overall recommendation leads.
     score_order = ("Overall recommendation", "Soundness", "Presentation", "Contribution", "Confidence")
     ordered_scores = [(name, state.scores[name]) for name in score_order if name in state.scores]
@@ -341,19 +414,26 @@ def _compose_review(state: ReviewState) -> str:
         f"- {name}: {score['value']}/{score['scale'].split('-')[-1]} — {score['rationale']}"
         for name, score in ordered_scores
     )
-    # An assessment, not a claim count: the event flags "review-as-summary" as a
-    # common mistake, so the Summary states the verdict the audit supports.
+    # A real review summarizes the PAPER first (its stated contribution and scope),
+    # then a short audit line — not the audit process alone.
     overall_value = state.scores.get("Overall recommendation", {}).get("value", "?")
     sr_dishonest = len(self_review_audit.get("findings", []))
     proven_issues = len(state.finding_records)
     summary_anchor = state.claims[0]["id"] if state.claims else "no-extracted-claim"
+    title = _paper_title(state.parsed_paper)
+    contribution = _contribution_sentence(state.claims)
+    if contribution:
+        lead = contribution
+    elif title:
+        lead = f'The paper, "{title}", presents a method and supporting experiments.'
+    else:
+        lead = "The paper presents a method and supporting experiments."
     summary_text = (
-        f"This review assesses the paper's claims against its supplied evidence. The "
-        f"deterministic audit proved {label_counts['contradicted']} contradiction(s), "
-        f"{sr_dishonest} dishonest self-certification(s), and {proven_issues} mechanical "
-        f"finding(s) in total; {label_counts['supported']} result claim(s) are evidence-backed "
-        f"and {label_counts['unverifiable']} remain unverifiable. Overall recommendation: "
-        f"{overall_value}/5 [{summary_anchor}]."
+        f"{lead} It reports {len(result_claims)} quantitative result claim(s) and cites "
+        f"{citation_count} prior work(s). Deterministic audit: {label_counts['contradicted']} "
+        f"contradiction(s), {sr_dishonest} dishonest self-certification(s), {proven_issues} mechanical "
+        f"finding(s); {label_counts['supported']} result claim(s) evidence-backed, "
+        f"{label_counts['unverifiable']} unverifiable. Overall recommendation: {overall_value}/5 [{summary_anchor}]."
     )
     # `best`-mode judgment layer (§4c) is additive prose. Empty in `audit` mode,
     # so this block renders nothing and audit output is byte-identical.

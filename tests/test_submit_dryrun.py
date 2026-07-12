@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -39,6 +40,36 @@ _VALID_REVIEW = {
 }
 
 
+class DotenvTests(unittest.TestCase):
+    def test_local_env_can_reference_shared_best_mode_env(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shared = root / "shared.env"
+            shared.write_text(
+                "OPENAI_API_KEY=sk-shared-test\n"
+                "OPENAI_BASE_URL=https://example.invalid/v1\n",
+                encoding="utf-8",
+            )
+            local = root / ".env"
+            local.write_text(
+                f"RALPHTHON_ENV_FILE={shared}\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {"OPENAI_API_KEY": "sk-exported-wins"},
+                clear=True,
+            ):
+                submit._load_dotenv(local)
+
+                self.assertEqual(os.environ["OPENAI_API_KEY"], "sk-exported-wins")
+                self.assertEqual(
+                    os.environ["OPENAI_BASE_URL"],
+                    "https://example.invalid/v1",
+                )
+
+
 class ClientAgainstMockTests(unittest.TestCase):
     def _authed(self) -> AgentClient:
         client = AgentClient(transport=MockTransport())
@@ -60,7 +91,10 @@ class ClientAgainstMockTests(unittest.TestCase):
             ReasonCode.ASSIGNMENTS_CAN_BE_CREATED,
         )
         papers = client.assignments()
-        self.assertEqual([paper["ordinal"] for paper in papers], [1, 2])
+        self.assertEqual(
+            [paper["ordinal"] for paper in papers],
+            list(range(1, 11)),
+        )
         self.assertIs(client.guidance.reason_code, ReasonCode.ASSIGNMENTS_RETURNED)
         self.assertIn(b"Schedule Transfer", client.fetch_pdf(papers[0]))
         self.assertIs(
@@ -77,9 +111,10 @@ class ClientAgainstMockTests(unittest.TestCase):
         by_ordinal = {paper["ordinal"]: paper for paper in client.assignments()}
         self.assertEqual(by_ordinal[1]["status"], "submitted")
         self.assertEqual(by_ordinal[2]["status"], "assigned")
-        self.assertTrue(
-            client.post_review(dict(_VALID_REVIEW) | {"ordinal": 2})["ok"]
-        )
+        for ordinal in range(2, 11):
+            self.assertTrue(
+                client.post_review(dict(_VALID_REVIEW) | {"ordinal": ordinal})["ok"]
+            )
         self.assertIs(
             client.guidance.reason_code, ReasonCode.ALL_REVIEWS_SUBMITTED
         )
@@ -258,7 +293,7 @@ class SubmitDryRunCLITests(unittest.TestCase):
             self.assertEqual(return_code, 0)
             report = json.loads((Path(directory) / "run_report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["mode"], "audit")  # dry run is forced offline
-            self.assertEqual(len(report["results"]), 2)
+            self.assertEqual(len(report["results"]), 10)
             self.assertTrue(all(record["ok"] and record["posted"] for record in report["results"]))
 
     def test_dry_run_refreshes_status_before_each_post(self) -> None:
@@ -281,7 +316,7 @@ class SubmitDryRunCLITests(unittest.TestCase):
             for index, (method, path) in enumerate(transport.calls)
             if method == "POST" and path == "/agent-reviews"
         ]
-        self.assertEqual(len(post_indexes), 2)
+        self.assertEqual(len(post_indexes), 10)
         for post_index in post_indexes:
             self.assertIn(
                 ("GET", "/status"),
@@ -309,13 +344,14 @@ class SubmitDryRunCLITests(unittest.TestCase):
             )
         self.assertIn("skip  #1", output.getvalue())
         self.assertEqual(
-            [record["ordinal"] for record in report["results"]], [2]
+            [record["ordinal"] for record in report["results"]],
+            list(range(2, 11)),
         )
         self.assertNotIn(
             ("GET", "/assignments/1/pdf"), transport.calls
         )
         self.assertEqual(
-            transport.calls.count(("POST", "/agent-reviews")), 1
+            transport.calls.count(("POST", "/agent-reviews")), 9
         )
 
     def test_terminal_none_stops_without_assignments_or_polling(self) -> None:

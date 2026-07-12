@@ -98,10 +98,17 @@ _NON_AGENT_PREREQUISITE_REASONS = {
 }
 
 
-def _load_dotenv(path: Path) -> None:
+def _load_dotenv(path: Path, *, _seen: set[Path] | None = None) -> None:
     """Populate ``os.environ`` from ``.env`` for the optional best-mode keys, for
-    keys not already exported. Never consulted in --dry-run (kept hermetic)."""
+    keys not already exported. A local file may point at one shared worktree file
+    with ``RALPHTHON_ENV_FILE`` so secrets need not be copied. Never consulted in
+    --dry-run (kept hermetic)."""
 
+    path = Path(path).expanduser().resolve()
+    seen = _seen if _seen is not None else set()
+    if path in seen:
+        return
+    seen.add(path)
     if not path.is_file():
         return
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -109,6 +116,12 @@ def _load_dotenv(path: Path) -> None:
         if line and not line.startswith("#") and "=" in line:
             key, _, value = line.partition("=")
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+    shared_env = os.environ.get("RALPHTHON_ENV_FILE", "").strip()
+    if shared_env:
+        shared_path = Path(shared_env).expanduser()
+        if not shared_path.is_absolute():
+            shared_path = path.parent / shared_path
+        _load_dotenv(shared_path, _seen=seen)
 
 
 def _ordinal(paper: dict) -> int:
@@ -697,6 +710,7 @@ def _api_error_message(error: AgentAPIError) -> str:
 
 def _error_context(error: AgentAPIError) -> str:
     guidance = error.guidance
+    detail = " ".join((error.detail or "<unknown>").split())[:300]
     reason = (
         guidance.reason_code.value
         if guidance is not None
@@ -704,12 +718,12 @@ def _error_context(error: AgentAPIError) -> str:
     )
     if guidance is None:
         return (
-            f"status={error.status_code} reason={reason} "
+            f"status={error.status_code} detail={detail} reason={reason} "
             "now=<unknown> window_opens_at=<unknown> "
             "window_closes_at=<unknown>"
         )
     return (
-        f"status={error.status_code} reason={reason} "
+        f"status={error.status_code} detail={detail} reason={reason} "
         f"now={guidance.time.now.isoformat()} "
         "window_opens_at="
         f"{guidance.time.window_opens_at.isoformat() if guidance.time.window_opens_at else None} "

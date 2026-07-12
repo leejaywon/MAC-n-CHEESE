@@ -81,25 +81,40 @@ SYSTEM_PROMPT = (
 
 def _default_client(base_url: str, api_key: str, model: str, max_tokens: int, timeout: int) -> Client:
     def call(messages: list[dict[str, str]]) -> str:
-        payload = json.dumps(
-            {
-                "model": model,
-                "messages": messages,
-                "temperature": 0,
-                "seed": 7,
-                "max_tokens": max_tokens,
-                "response_format": {"type": "json_object"},
-            }
-        ).encode("utf-8")
-        request = Request(
-            base_url.rstrip("/") + "/chat/completions",
-            data=payload,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urlopen(request, timeout=timeout) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        return data["choices"][0]["message"]["content"]
+        params: dict[str, object] = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0,
+            "seed": 7,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
+        }
+        for _ in range(len(params)):
+            request = Request(
+                base_url.rstrip("/") + "/chat/completions",
+                data=json.dumps(params).encode("utf-8"),
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(request, timeout=timeout) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                return data["choices"][0]["message"]["content"]
+            except HTTPError as error:
+                if error.code != 400:
+                    raise
+                try:
+                    info = json.loads(error.read().decode("utf-8", "replace")).get("error", {})
+                except ValueError:
+                    raise error
+                param = info.get("param")
+                if info.get("code") not in ("unsupported_parameter", "unsupported_value") or param not in params:
+                    raise
+                if param == "max_tokens":
+                    params["max_completion_tokens"] = params.pop("max_tokens")
+                else:
+                    params.pop(param)
+        raise URLError("model rejected the request parameters")
 
     return call
 
@@ -861,7 +876,7 @@ def committee_review(
     base_url: str | None = None,
     model: str | None = None,
     client: Client | None = None,
-    max_tokens: int = 3_500,
+    max_tokens: int = 6_000,
     timeout: int | None = None,
     workers: int | None = None,
 ) -> dict[str, Any]:

@@ -164,7 +164,7 @@ def _bounded_paper(sanitized_paper: str, max_chars: int) -> tuple[str, list[str]
 
 def _user_prompt(sanitized_paper: str, grounding: dict[str, list[str]], anchor_scores: dict[str, int]) -> str:
     try:
-        max_chars = max(8_000, int(os.environ.get("RALPH_BEST_MAX_CHARS", "60000")))
+        max_chars = max(8_000, int(os.environ.get("REVIEWER_BEST_MAX_CHARS", "60000")))
     except ValueError:
         max_chars = 60_000
     selected_paper, omitted = _bounded_paper(sanitized_paper, max_chars)
@@ -888,12 +888,12 @@ def committee_review(
     timeout_seconds = (
         max(1, timeout)
         if type(timeout) is int
-        else _env_int("RALPH_COMMITTEE_TIMEOUT", 60, minimum=1)
+        else _env_int("REVIEWER_COMMITTEE_TIMEOUT", 60, minimum=1)
     )
     worker_count = (
         min(3, max(1, workers))
         if type(workers) is int
-        else _env_int("RALPH_COMMITTEE_WORKERS", 3, minimum=1, maximum=3)
+        else _env_int("REVIEWER_COMMITTEE_WORKERS", 3, minimum=1, maximum=3)
     )
     raw_deterministic_audit = deterministic_audit
     deterministic_audit: dict[str, Any] = {}

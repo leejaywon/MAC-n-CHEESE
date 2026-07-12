@@ -43,7 +43,7 @@ EMPTY_ARXIV_FEED = b'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/At
 
 class GeneralityTests(unittest.TestCase):
     def _parse(self, text: str, ledger: str | None = None) -> tuple[dict, Path]:
-        directory = Path(tempfile.mkdtemp(prefix="ralphthon-generality-"))
+        directory = Path(tempfile.mkdtemp(prefix="review-generality-"))
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
         (directory / "paper.md").write_text(text, encoding="utf-8")
         if ledger is not None:

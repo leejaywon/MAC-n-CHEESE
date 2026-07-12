@@ -33,7 +33,7 @@ CORPUS = {
 
 
 def _get(url: str, timeout: int = 25) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 ralphthon-corpus/1.0"})
+    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 paper-review-corpus/1.0"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read()
 

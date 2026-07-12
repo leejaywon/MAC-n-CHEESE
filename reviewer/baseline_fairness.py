@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from .parser import paper_text
+
 
 IMPROVEMENT_RE = re.compile(
     r"\b(?:improv(?:e[ds]?|ing|ement)|outperform(?:s|ed|ing)?|surpass(?:es|ed|ing)?|"
@@ -117,9 +119,8 @@ def _load_records(evidence_dir: Path) -> tuple[list[LedgerRecord], list[str]]:
 
 
 def _sentences(parsed_paper: dict[str, Any]) -> Iterable[tuple[str, dict[str, Any]]]:
-    source = Path(str(parsed_paper["source_path"]))
     sections = parsed_paper.get("sections", [])
-    for line_number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, line in enumerate(paper_text(parsed_paper).splitlines(), start=1):
         if not line.strip() or "|" in line:
             continue
         for match in re.finditer(r"[^.!?]+[.!?]?", line):

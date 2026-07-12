@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any
+
+from .parser import paper_text
 
 
 CORE_SECTION_GROUPS = {
@@ -24,7 +25,7 @@ CHECKBOX_RE = re.compile(r"^\s*[-*+]\s+\[([^\]])\]\s+(.+)$")
 
 
 def _source(parsed_paper: dict[str, Any]) -> tuple[str, list[str]]:
-    text = Path(str(parsed_paper["source_path"])).read_text(encoding="utf-8")
+    text = paper_text(parsed_paper)
     return text, text.splitlines()
 
 

@@ -53,6 +53,28 @@ class ComposerTests(unittest.TestCase):
         self.assertIn("[claim-001]", promoted["Overall recommendation"]["rationale"])
         self.assertIn("[claim-001]", demoted["Soundness"]["rationale"])
 
+    def test_unsupported_paper_with_empty_references_is_score_capped(self) -> None:
+        paper_text = (
+            "# Unsupported Study\n\n"
+            "## Method\n\n"
+            "We propose a novel architecture for retrieval.\n\n"
+            "## Results\n\n"
+            "Accuracy was 81.0% on the benchmark.\n\n"
+            "## References\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paper = root / "paper.md"
+            evidence = root / "evidence"
+            paper.write_text(paper_text, encoding="utf-8")
+            evidence.mkdir()
+            state = run_pipeline(paper, evidence, root / "review.md")
+
+        with self.subTest("soundness"):
+            self.assertLessEqual(state.scores["Soundness"]["value"], 2)
+        with self.subTest("overall recommendation"):
+            self.assertLessEqual(state.scores["Overall recommendation"]["value"], 3)
+
     def test_pipeline_outputs_grounded_sections_and_all_score_rationales(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             state = run_pipeline(
@@ -64,7 +86,8 @@ class ComposerTests(unittest.TestCase):
         self.assertTrue(state.draft_comments)
         self.assertTrue(state.grounded_comments)
         self.assertEqual(set(state.scores), {
-            "Soundness", "Presentation", "Contribution", "Overall recommendation", "Confidence"
+            "Soundness", "Presentation", "Significance", "Originality",
+            "Overall recommendation", "Confidence"
         })
         self.assertIn("S5 DRAFT/GROUND:", state.review_markdown)
         self.assertNotIn("Not scored", state.review_markdown)

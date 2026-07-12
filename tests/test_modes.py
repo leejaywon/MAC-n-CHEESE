@@ -111,8 +111,16 @@ class ModeTests(unittest.TestCase):
                 # Overall 4->3 is a permitted lowering; Soundness 3->1 must be
                 # clamped to the floor (2) because no defect was proven.
                 "calibration": {
-                    "Overall recommendation": {"value": 3, "reason": "insufficient empirical rigor"},
-                    "Soundness": {"value": 1, "reason": "attempted floor with no proven defect"},
+                    "Overall recommendation": {
+                        "value": 2,
+                        "reason": "insufficient empirical rigor",
+                        "grounding": "arxiv:1706.03762",
+                    },
+                    "Soundness": {
+                        "value": 1,
+                        "reason": "attempted floor with no proven defect",
+                        "grounding": "arxiv:1706.03762",
+                    },
                 },
                 "model": "gpt-test",
                 "prompt_sha256": "deadbeef" * 8,
@@ -143,7 +151,7 @@ class ModeTests(unittest.TestCase):
         self.assertIn("Single-seed results lack variance", markdown)      # model comment
         self.assertIn("arXiv:1706.03762", markdown)                        # retrieval comment
         self.assertIn("Model critique: `gpt-test`", markdown)              # provenance
-        self.assertEqual(state.scores["Overall recommendation"]["value"], 3)  # 4 -> 3 within the floor
+        self.assertEqual(state.scores["Overall recommendation"]["value"], 2)  # 3 -> 2 within the floor
         self.assertEqual(state.scores["Soundness"]["value"], 2)            # 1 clamped to floor 2 (no proven defect)
         self.assertIn("calibration lowered", markdown.lower())
 

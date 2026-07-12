@@ -14,8 +14,9 @@ positive eval accounting so the backpressure metric stays about primary flaws.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any
+
+from .parser import paper_text
 
 
 # The official Track 1 template uses a TRAILING checkbox ("- label: [ ]") while
@@ -52,8 +53,7 @@ ITEM_FAMILY_PATTERNS: tuple[tuple[re.Pattern[str], frozenset[str]], ...] = (
 
 
 def _self_review_items(parsed_paper: dict[str, Any]) -> list[tuple[int, str, bool]]:
-    source = Path(str(parsed_paper["source_path"]))
-    lines = source.read_text(encoding="utf-8").splitlines()
+    lines = paper_text(parsed_paper).splitlines()
     sections = [
         section
         for section in parsed_paper.get("sections", [])

@@ -3,10 +3,13 @@
 ## Identity
 
 - Agent name: NFL-Auditor (Team: No Free Lunch)
-- Version or Git SHA: [freeze at submission: `git rev-parse --short HEAD`]
-- Frozen paper input: [paper path + sha256 — filled per review by run_review.py]
-- Evidence bundle input: [paths + sha256 — filled per review by run_review.py]
-- Output path: [review result path]
+- Version: content-addressed SHA-256 manifest of `run_review.py`,
+  `requirements.txt`, this instruction, and every `reviewer/*.py` module.
+- Frozen paper input: each result records the original PDF/Markdown path,
+  media type, byte length, SHA-256, PDF page count, derived Markdown SHA-256,
+  and converter identity.
+- Evidence bundle input: each result records every relative path and SHA-256.
+- Output path: recorded and bound to the frozen identity in each result.
 
 ## Review Instruction
 
@@ -30,11 +33,14 @@ Pipeline (implemented in `run_review.py`, stages S1–S6):
    evidence pointer.
 5. Compose in two passes: draft, then ground — every sentence maps to a
    finding/claim id; ungrounded praise is deleted, ungrounded criticism is
-   demoted to Questions. Scores are calibrated: Overall starts at borderline
-   and moves only on verified findings; each score cites a claim or finding id
-   resolved to the paper or saved evidence in Evidence Trace.
-6. Freeze: record the content-addressed agent version, review-agent hash, input
-   hashes, UTC execution timestamp, output path, and verdict-label digest.
+   demoted to Questions. Scores are emitted directly as Soundness,
+   Presentation, Significance, and Originality (1–4), Overall recommendation
+   (1–6), and Confidence (1–5). Unsupported headline results cap deterministic
+   Overall at 3; integrity breaches cap it at 2.
+6. Freeze: record the content-addressed agent version, review-agent hash,
+   original/derived input identities, evidence hashes, canonical external
+   citation-snapshot digest, UTC execution timestamp, output path, and
+   verdict-label digest.
 
 Mark unsupported or missing evidence explicitly. Do not invent experiments,
 citations, author intent, reviewer consensus, or private participant
@@ -42,13 +48,16 @@ information. Do not edit the frozen paper or silently request new compute.
 
 ## Modes
 
-- `--mode audit` (DEFAULT, the submitted artifact): the full deterministic
+- `--mode audit` (local default and live fallback): the full deterministic
   S1–S6 pipeline. No model call, fully reproducible, injection-proof.
-- `--mode best` (optional bonus): `audit` plus a scientific judgment layer that
-  may call a model on the SANITIZED paper text only (temperature 0, fixed seed,
-  calibration may only lower scores). It is additive prose in its own section;
-  it never changes the audit verdict labels and never blocks a submission. If
-  the layer is unbuilt or a model is unavailable, `best` output equals `audit`.
+- `--mode best` (live review mode): `audit` plus three concurrent scientific
+  specialists and one grounded area-chair meta-review. Every call sees only
+  SANITIZED, stable-ID paper spans. Validated output is merged into the official
+  Summary, Strengths, Weaknesses, Questions, and six score rationales; it may
+  raise or lower scores, but proven integrity breaches cap Soundness and Overall
+  at 2. The audit verdict labels remain frozen. Any committee or schema failure
+  falls back for that paper to the complete deterministic review and never
+  blocks the other papers.
 
 ## Deterministic Output Contract
 

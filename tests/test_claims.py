@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from reviewer import extract_claims, parse_markdown, run_pipeline
+from reviewer import extract_claims, label_verdicts, parse_markdown, run_pipeline
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +58,52 @@ class ClaimVerdictTests(unittest.TestCase):
         self.assertTrue(verdict["evidence"])
         self.assertTrue(all(pointer.startswith("finding-") for pointer in verdict["evidence"]))
         self.assertIn(f"[{claim['id']}] **contradicted**", state.review_markdown)
+
+    def test_citation_finding_on_shared_line_only_contradicts_citation_claim(self) -> None:
+        line = (
+            "Accuracy reached 90% on the benchmark. "
+            "The cited comparison is arXiv:1901.99999."
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            paper = Path(directory) / "paper.md"
+            paper.write_text(f"# Shared Line\n\n{line}\n", encoding="utf-8")
+            claims = extract_claims(parse_markdown(paper))
+
+        self.assertEqual(len(claims), 2)
+        self.assertEqual({claim["location"]["line"] for claim in claims}, {3})
+        result_claim = next(claim for claim in claims if claim["type"] == "result")
+        citation_claim = next(claim for claim in claims if claim["refs"])
+        finding = {
+            "check": "citation-existence",
+            "severity": "error",
+            "location": {
+                "line": 3,
+                "column_start": citation_claim["location"]["column_start"],
+                "column_end": citation_claim["location"]["column_end"],
+            },
+            "expected": "a published record for 1901.99999",
+            "observed": "the arXiv API returned no record for this identifier",
+            "evidence_path": "https://export.arxiv.org/api/query?id_list=1901.99999",
+        }
+        checks = {
+            "ledger-trace": {
+                "traces": [
+                    {
+                        "number_id": result_claim["numbers"][0],
+                        "matched": True,
+                        "evidence": [
+                            {"path": "experiments.jsonl", "line": 1, "field": "accuracy"}
+                        ],
+                    }
+                ]
+            }
+        }
+
+        verdicts, _ = label_verdicts(claims, checks, [finding])
+        verdict_by_claim = {verdict["claim_id"]: verdict for verdict in verdicts}
+
+        self.assertEqual(verdict_by_claim[citation_claim["id"]]["label"], "contradicted")
+        self.assertEqual(verdict_by_claim[result_claim["id"]]["label"], "supported")
 
 
 if __name__ == "__main__":

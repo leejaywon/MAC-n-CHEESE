@@ -14,6 +14,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .parser import paper_text
+
 
 NEGATIVE_STATUSES = frozenset({"discard", "crash"})
 IDENTITY_FIELDS = ("trial", "run_tag", "job_slug", "job_name", "name", "id")
@@ -25,25 +27,7 @@ NEGATIVE_LANGUAGE_RE = re.compile(
 
 
 def _paper_lines(parsed_paper: dict[str, Any]) -> list[str]:
-    source_path = parsed_paper.get("source_path")
-    if isinstance(source_path, str):
-        try:
-            return Path(source_path).read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError):
-            pass
-
-    # The fallback keeps the check usable with serialized parser output.  Its
-    # locations are section-relative, so callers should normally retain the
-    # source_path when exact paper line numbers matter.
-    lines: list[str] = []
-    for section in parsed_paper.get("sections", []):
-        title = section.get("title")
-        if isinstance(title, str):
-            lines.append(title)
-        content = section.get("content")
-        if isinstance(content, str):
-            lines.extend(content.splitlines())
-    return lines
+    return paper_text(parsed_paper).splitlines()
 
 
 def _identity(record: dict[str, Any]) -> tuple[str, str] | None:

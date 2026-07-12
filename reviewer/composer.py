@@ -1,38 +1,100 @@
-"""Two-pass, evidence-bound S5 review composition.
+"""Two-pass deterministic composition plus validated committee score merging.
 
 The DRAFT pass is deliberately cheap and deterministic: it proposes short
 comments from S4 verdicts.  The GROUND pass is the authority.  It retains a
 statement only when its stance is licensed by the referenced claim verdict or
 finding.  This keeps the event runtime offline while preserving the same
-separation of responsibilities as a cheap-model/strong-grounder design.
+separation of responsibilities when best mode later adds a scientific
+committee judgment.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable, Mapping
+
+from .review_schema import ScientificJudgment
 
 
 SCORE_SCALES = {
     "Soundness": "1-4",
     "Presentation": "1-4",
-    "Contribution": "1-4",
-    "Overall recommendation": "1-5",
+    "Significance": "1-4",
+    "Originality": "1-4",
+    "Overall recommendation": "1-6",
     "Confidence": "1-5",
 }
 
 
-def normalize_overall(
-    soundness: int, presentation: int, contribution: int, headline_supported: bool
-) -> int:
-    """Map the three 1-4 sub-scores onto the 1-5 recommendation scale, lifted a
-    step when headline results are evidence-verified. Shared by the deterministic
-    scorer and the best-mode re-normalization so Overall always tracks the subs."""
+def apply_scientific_scores(
+    deterministic_scores: Mapping[str, Mapping[str, Any]],
+    judgment: ScientificJudgment,
+    *,
+    integrity_breach: bool = False,
+    integrity_grounding: Iterable[str] = (),
+) -> dict[str, dict[str, Any]]:
+    """Copy all six validated direct scores, then enforce proven-integrity caps."""
 
-    sub_mean = (soundness + presentation + contribution) / 3.0
-    base = 1.0 + (sub_mean - 1.0) * (4.0 / 3.0)  # [1,4] -> [1,5]
-    if headline_supported:
-        base += 1.0
-    return max(1, min(5, round(base)))
+    if not isinstance(judgment, ScientificJudgment):
+        raise TypeError("judgment must be a validated ScientificJudgment")
+    final = {
+        dimension: dict(score)
+        for dimension, score in deterministic_scores.items()
+    }
+    for dimension, scale in SCORE_SCALES.items():
+        adjustment = judgment.scores[dimension]
+        grounding = (
+            (adjustment.grounding,)
+            if isinstance(adjustment.grounding, str)
+            else adjustment.grounding
+        )
+        citation = ", ".join(grounding)
+        rationale = " ".join(adjustment.reason.split())
+        if citation:
+            rationale = f"{rationale} Grounding: [{citation}]."
+        final[dimension] = {
+            "value": adjustment.value,
+            "scale": scale,
+            "rationale": rationale,
+        }
+
+    if integrity_breach:
+        anchors = tuple(
+            grounding_id
+            for grounding_id in integrity_grounding
+            if isinstance(grounding_id, str) and grounding_id.strip()
+        )
+        anchor_text = f" [{', '.join(anchors)}]" if anchors else ""
+        for dimension in ("Soundness", "Overall recommendation"):
+            score = final[dimension]
+            score["value"] = min(int(score["value"]), 2)
+            score["rationale"] = (
+                f"{score['rationale']} Deterministic integrity cap: a proven "
+                f"contradiction or dishonest self-certification limits "
+                f"{dimension} to at most 2{anchor_text}."
+            )
+    return final
+
+
+def normalize_overall(
+    soundness: int,
+    presentation: int,
+    significance: int,
+    originality: int,
+    headline_supported: int,
+) -> int:
+    """Return a conservative direct 1-6 recommendation.
+
+    The deterministic layer never emits 6. Unsupported manuscripts are capped
+    at 3, one supported headline result permits 4, and multiple supported
+    headline results plus adequate presentation permit 5.
+    """
+
+    if headline_supported <= 0:
+        mean = (soundness + presentation + significance + originality) / 4
+        return min(3, max(1, int(mean + 0.5)))
+    if headline_supported == 1:
+        return 4 if soundness >= 3 else 3
+    return 5 if presentation >= 3 and soundness >= 3 else 4
 
 
 def draft_comments(
@@ -175,18 +237,7 @@ def calibrate_scores(
     self_review_dishonest: int = 0,
     positioning: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Apply the explicit §5 borderline-first scoring policy.
-
-    An integrity breach — a proven contradiction OR a dishonest self-certification
-    — is a serious soundness problem that a supported headline result must not
-    offset. ``self_review_dishonest`` is the count of dishonest Self-Review boxes.
-    ``positioning`` is the deterministic related-work / novelty audit; a proven
-    novelty/SOTA overclaim (a superiority claim situated against no prior work)
-    lowers Contribution below the borderline anchor. Absent a proven overclaim,
-    Contribution stays at the borderline — verified novelty and broad significance
-    are not machine-checkable here and are left to the ``--best`` judgment layer,
-    so this deterministic pass never inflates Contribution.
-    """
+    """Score directly in the six-field openagentreview.org schema."""
 
     verdict_by_claim = {item["claim_id"]: item for item in verdicts}
     supported = [claim for claim in claims if verdict_by_claim[claim["id"]]["label"] == "supported"]
@@ -201,36 +252,37 @@ def calibrate_scores(
     template_findings = [
         finding for finding in (findings or []) if finding.get("check") == "template-compliance"
     ]
+    injection_findings = [
+        finding for finding in (findings or []) if finding.get("check") == "injection-scan"
+    ]
 
-    # Grounded uplift signals: every score above the borderline must be EARNED by
-    # evidence, never awarded by default. This keeps the "no fabricated praise"
-    # property while letting a strong, clean, well-situated paper reach the top of
-    # each scale (so scores correlate with human judges instead of hitting an
-    # artificial ceiling).
     signals = (positioning or {}).get("signals", {})
     positioned = bool(signals.get("positioned"))
     situated_novelty = positioned and signals.get("novelty_claim_count", 0) > 0
-    # Injection-scan findings are a security/ethics signal about hidden
-    # reviewer-directed instructions, not a scientific defect, so they must not
-    # move the scientific scores — otherwise an injection twin would score
-    # differently from its sanitized-identical clean counterpart.
     scientific_findings = [
         finding for finding in (findings or []) if finding.get("check") != "injection-scan"
     ]
     clean_run = not scientific_findings  # zero proven scientific findings
-    strong_support = len(headline_supported) >= 2
     has_results = any(claim.get("type") in {"result", "arithmetic"} for claim in claims)
 
-    breach_count = len(contradicted) + self_review_dishonest
+    breach_count = len(contradicted) + self_review_dishonest + len(injection_findings)
     integrity_breach = breach_count > 0
+    integrity_anchor = (
+        contradicted_anchor
+        if contradicted
+        else str(injection_findings[0].get("id", anchor))
+        if injection_findings
+        else anchor
+    )
     if integrity_breach:
         soundness = 1
         soundness_reason = (
             f"A proven integrity breach ({len(contradicted)} contradiction(s), "
-            f"{self_review_dishonest} dishonest self-certification(s)) undermines soundness "
-            f"[{contradicted_anchor}]."
+            f"{self_review_dishonest} dishonest self-certification(s), "
+            f"{len(injection_findings)} concealed-instruction/content finding(s)) "
+            f"undermines soundness [{integrity_anchor}]."
         )
-    elif headline_supported and clean_run and strong_support:
+    elif len(headline_supported) >= 2 and clean_run:
         soundness = 4
         soundness_reason = (
             f"Multiple headline results have direct mechanical support and no finding was proven "
@@ -239,12 +291,6 @@ def calibrate_scores(
     elif headline_supported:
         soundness = 3
         soundness_reason = f"At least one headline result has direct mechanical support [{supported_anchor}]."
-    elif positioned and has_results and clean_run:
-        soundness = 3
-        soundness_reason = (
-            f"No contradiction or finding was proven and the reported results are situated against "
-            f"cited prior work, though they could not be independently verified [{anchor}]."
-        )
     else:
         soundness = 2
         soundness_reason = f"No headline result has mechanical support, but none is contradicted [{anchor}]."
@@ -276,42 +322,55 @@ def calibrate_scores(
         None,
     )
     if overclaim:
-        contribution = 1
-        contribution_reason = (
+        originality = 1
+        originality_reason = (
             f"A novelty/SOTA claim at paper line {overclaim['location']['line']} is situated against "
-            f"no cited prior work, so the contribution is not established [{anchor}]."
+            f"no cited prior work, so originality is not established [{anchor}]."
         )
     elif situated_novelty:
-        contribution = 3
-        contribution_reason = (
-            f"The paper makes a novelty claim situated against cited prior work — a contribution "
-            f"beyond mere result support [{anchor}]."
+        originality = 3
+        originality_reason = (
+            f"The novelty claim is explicitly situated against prior work, while external novelty "
+            f"remains a judgment-layer question [{anchor}]."
         )
     else:
-        contribution = 2
-        contribution_reason = (
-            f"The evidence trace establishes result support, not verified novelty or broad "
-            f"significance [{anchor}]."
+        originality = 2
+        originality_reason = (
+            f"The deterministic trace neither establishes nor disproves novelty [{anchor}]."
+        )
+
+    if len(headline_supported) >= 2:
+        significance = 3
+        significance_reason = (
+            f"Multiple reported outcomes are evidence-supported, establishing nontrivial empirical "
+            f"scope without proving broad field impact [{supported_anchor}]."
+        )
+    else:
+        significance = 2
+        significance_reason = (
+            f"Broad impact is not mechanically established"
+            + (f"; one result is supported [{supported_anchor}]." if headline_supported else f" [{anchor}].")
         )
 
     if integrity_breach:
         overall = 1 if breach_count >= 2 else 2
         overall_reason = (
             f"A proven integrity breach ({breach_count} issue(s)) drives a reject recommendation; "
-            f"supported results do not offset it [{contradicted_anchor}]."
+            f"supported results do not offset it [{integrity_anchor}]."
         )
     else:
-        # Normalize: the holistic recommendation follows the three sub-dimension
-        # scores (each on 1-4) mapped onto the 1-5 recommendation scale, then
-        # lifted a step when headline results are actually evidence-verified. This
-        # keeps Overall CONSISTENT with Soundness/Presentation/Contribution instead
-        # of drifting from them.
-        overall = normalize_overall(soundness, presentation, contribution, bool(headline_supported))
+        overall = normalize_overall(
+            soundness,
+            presentation,
+            significance,
+            originality,
+            len(headline_supported),
+        )
         overall_anchor = supported_anchor if headline_supported else anchor
         overall_reason = (
-            f"Normalized from Soundness {soundness}/4, Presentation {presentation}/4, Contribution "
-            f"{contribution}/4"
-            + (" with evidence-verified headline results" if headline_supported else "")
+            f"Directly calibrated from Soundness {soundness}/4, Presentation {presentation}/4, "
+            f"Significance {significance}/4, Originality {originality}/4"
+            + (f" with {len(headline_supported)} evidence-supported headline result(s)" if headline_supported else "")
             + f" [{overall_anchor}]."
         )
     overall = max(1, min(5, overall))
@@ -325,23 +384,41 @@ def calibrate_scores(
     # proven findings, a positioning judgment, and concrete reported results — not
     # result verification alone. So a well-analysed peer paper without an evidence
     # bundle is not stuck reporting 1/5, while an opaque paper stays low.
-    checkable = (
-        (1 if verifiable else 0)
-        + (1 if scientific_findings else 0)
-        + (1 if positioned else 0)
-        + (1 if has_results else 0)
+    evidence_claims = [
+        claim for claim in claims if claim.get("type") in {"result", "arithmetic"}
+    ]
+    verified_evidence_claims = [
+        claim for claim in evidence_claims if claim in verifiable
+    ]
+    coverage = (
+        len(verified_evidence_claims) / len(evidence_claims)
+        if evidence_claims
+        else 0.0
     )
-    confidence = max(2, min(5, 1 + checkable))
+    extraction_quality = 1.0 if claims else 0.0
+    positioning_coverage = 1.0 if positioned else 0.0
+    confidence = 1
+    if extraction_quality:
+        confidence += 1
+    if coverage > 0:
+        confidence += 1
+    if coverage >= 0.75 or scientific_findings:
+        confidence += 1
+    if positioning_coverage and coverage >= 0.5:
+        confidence += 1
+    confidence = max(1, min(5, confidence))
     confidence_reason = (
-        f"Certainty rests on {len(verifiable)} verified claim(s), {len(scientific_findings)} proven "
-        f"finding(s), positioning {'assessed' if positioned else 'unavailable'}, and "
-        f"{'concrete' if has_results else 'no'} reported results [{anchor}]."
+        f"Verified result coverage is {len(verified_evidence_claims)}/{len(evidence_claims)}; "
+        f"claim extraction {'succeeded' if claims else 'failed'}, positioning is "
+        f"{'covered' if positioned else 'not covered'}, and {len(scientific_findings)} finding(s) "
+        f"are mechanically grounded [{anchor}]."
     )
 
     return {
         "Soundness": {"value": soundness, "scale": SCORE_SCALES["Soundness"], "rationale": soundness_reason},
         "Presentation": {"value": presentation, "scale": SCORE_SCALES["Presentation"], "rationale": presentation_reason},
-        "Contribution": {"value": contribution, "scale": SCORE_SCALES["Contribution"], "rationale": contribution_reason},
+        "Significance": {"value": significance, "scale": SCORE_SCALES["Significance"], "rationale": significance_reason},
+        "Originality": {"value": originality, "scale": SCORE_SCALES["Originality"], "rationale": originality_reason},
         "Overall recommendation": {"value": overall, "scale": SCORE_SCALES["Overall recommendation"], "rationale": overall_reason},
         "Confidence": {"value": confidence, "scale": SCORE_SCALES["Confidence"], "rationale": confidence_reason},
     }

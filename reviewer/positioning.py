@@ -24,7 +24,6 @@ literature) is retrieval-grounded and lives in the ``--best`` judgment layer
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any, Iterable
 
 from .citation_existence import (
@@ -34,6 +33,7 @@ from .citation_existence import (
     DOI_RE,
     S2_URL_RE,
 )
+from .parser import paper_text
 
 
 # A section title that constitutes explicit positioning against prior art.
@@ -122,14 +122,17 @@ COMPARATOR_RE = re.compile(
 
 
 def _source_lines(parsed_paper: dict[str, Any]) -> list[str]:
-    return Path(str(parsed_paper["source_path"])).read_text(encoding="utf-8").splitlines()
+    return paper_text(parsed_paper).splitlines()
 
 
 def _has_related_work_section(parsed_paper: dict[str, Any]) -> bool:
-    return any(
-        RELATED_WORK_TITLE_RE.search(str(section.get("title", "")))
-        for section in parsed_paper.get("sections", [])
-    )
+    for section in parsed_paper.get("sections", []):
+        if not RELATED_WORK_TITLE_RE.search(str(section.get("title", ""))):
+            continue
+        content = re.sub(r"[\s#>*_\-\[\]()]+", " ", str(section.get("content", ""))).strip()
+        if content:
+            return True
+    return False
 
 
 def _citation_count(lines: list[str]) -> int:

@@ -23,6 +23,7 @@ import http.client
 import json
 import re
 import unicodedata
+from datetime import date, datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
@@ -32,6 +33,7 @@ from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
 from .citation_existence import ARXIV_RE, BRACKET_ARXIV_RE
+from .parser import paper_text
 
 
 Fetcher = Callable[[str], bytes]
@@ -54,6 +56,7 @@ ARXIV_ABS_RE = re.compile(r"arxiv\.org/abs/(?P<id>[^\s<]+)", re.I)
 # common way to cite an arXiv work that the bare arXiv patterns miss, causing a
 # false "not cited" accusation. It maps directly onto the arXiv id.
 ARXIV_DOI_RE = re.compile(r"10\.48550/arxiv\.(?P<id>\d{4}\.\d{4,5})", re.I)
+DATE_RE = re.compile(r"\b(?P<date>20\d{2}-\d{2}-\d{2})\b")
 
 
 def _default_fetch(url: str) -> bytes:
@@ -69,10 +72,6 @@ def _normalize_tokens(text: str) -> list[str]:
         for token in WORD_RE.findall(normalized)
         if token not in STOPWORDS and len(token) > 2
     ]
-
-
-def _paper_text(parsed_paper: dict[str, Any]) -> str:
-    return Path(str(parsed_paper["source_path"])).read_text(encoding="utf-8")
 
 
 def _title(parsed_paper: dict[str, Any]) -> str:
@@ -111,7 +110,7 @@ def _topic_terms(parsed_paper: dict[str, Any], limit: int = 8) -> list[str]:
 
 
 def _cited_arxiv_ids(parsed_paper: dict[str, Any]) -> set[str]:
-    text = _paper_text(parsed_paper)
+    text = paper_text(parsed_paper)
     ids: set[str] = set()
     for pattern in (ARXIV_RE, BRACKET_ARXIV_RE, ARXIV_DOI_RE):
         for match in pattern.finditer(text):
@@ -214,9 +213,14 @@ def check_novelty_positioning(
 
     entries = _retrieve_arxiv(query, cache_dir, fetch, max_results)
     cited_ids = _cited_arxiv_ids(parsed_paper)
-    paper_tokens = set(_normalize_tokens(_paper_text(parsed_paper)))
+    paper_tokens = set(_normalize_tokens(paper_text(parsed_paper)))
     topic_token_set = set(topic_terms) | set(_normalize_tokens(_abstract(parsed_paper)))
 
+    declared_match = DATE_RE.search(paper_text(parsed_paper))
+    declared_date = (
+        date.fromisoformat(declared_match.group("date")) if declared_match else None
+    )
+    retrieved_at = datetime.now(timezone.utc).date().isoformat()
     traces: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
     for entry in entries:
@@ -227,26 +231,46 @@ def check_novelty_positioning(
         # "Already discussed by title": the paper names this work even without a
         # machine-readable id, so it is engaged with — do not ask about it.
         mentioned = bool(title_tokens) and len(title_tokens & paper_tokens) / len(title_tokens) >= 0.8
+        published_text = entry.get("published", "")
+        try:
+            published_date = date.fromisoformat(published_text[:10])
+        except (TypeError, ValueError):
+            published_date = None
+        temporal_relation = (
+            "concurrent-or-post-date"
+            if declared_date and published_date and published_date > declared_date
+            else "prior"
+            if declared_date and published_date
+            else "unknown"
+        )
         trace = {
             "id": entry["id"],
             "title": entry["title"],
+            "published": published_text,
+            "retrieved_at": retrieved_at,
+            "temporal_relation": temporal_relation,
             "similarity": round(similarity, 4),
             "already_cited": already_cited,
             "mentioned_by_title": mentioned,
         }
         traces.append(trace)
         if similarity >= min_similarity and not already_cited and not mentioned:
-            candidates.append({**trace, "published": entry.get("published", "")})
+            candidates.append(trace)
 
     candidates.sort(key=lambda item: item["similarity"], reverse=True)
     questions: list[dict[str, Any]] = []
     for candidate in candidates[:max_questions]:
+        timing = (
+            "This is concurrent/post-date work rather than missing prior art; "
+            if candidate["temporal_relation"] == "concurrent-or-post-date"
+            else ""
+        )
         questions.append(
             {
                 "section": "Questions for the Authors",
                 "stance": "question",
                 "text": (
-                    f"Closely related prior work \"{candidate['title']}\" "
+                    f"{timing}Closely related work \"{candidate['title']}\" "
                     f"(arXiv:{candidate['id']}) is not cited or discussed. How does the "
                     f"contribution differ from it, and does the positioning still hold?"
                 ),
@@ -261,4 +285,6 @@ def check_novelty_positioning(
         "retrieved": entries,
         "traces": traces,
         "questions": questions,
+        "paper_declared_date": declared_date.isoformat() if declared_date else None,
+        "retrieved_at": retrieved_at,
     }

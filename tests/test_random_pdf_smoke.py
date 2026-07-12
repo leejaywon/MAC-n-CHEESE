@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 from eval import random_pdf_smoke as smoke
 
 
-REQUIRED_REVIEW = """# Track 2 — ICML-Style Review
+REQUIRED_REVIEW = """# ICML-Style Paper Review
 
 ## Paper and Evidence Identity
 

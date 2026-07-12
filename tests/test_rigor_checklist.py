@@ -11,7 +11,7 @@ from reviewer.rigor_checklist import rigor_checklist_missing, rigor_checklist_qu
 
 
 def _parse(text: str) -> dict:
-    directory = Path(tempfile.mkdtemp(prefix="ralphthon-rigor-"))
+    directory = Path(tempfile.mkdtemp(prefix="review-rigor-"))
     (directory / "paper.md").write_text(text, encoding="utf-8")
     return parse_markdown(directory / "paper.md")
 

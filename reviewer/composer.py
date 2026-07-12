@@ -237,7 +237,7 @@ def calibrate_scores(
     self_review_dishonest: int = 0,
     positioning: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Score directly in the six-field openagentreview.org schema."""
+    """Score directly in the six-field review schema (four dimensions 1-4, Overall 1-6, Confidence 1-5)."""
 
     verdict_by_claim = {item["claim_id"]: item for item in verdicts}
     supported = [claim for claim in claims if verdict_by_claim[claim["id"]]["label"] == "supported"]

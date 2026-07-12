@@ -1,6 +1,6 @@
-"""Audit the official Track 1 Self-Review checklist against the actual findings.
+"""Audit a Self-Review checklist against the actual findings.
 
-Every event Track 1 submission carries a Self-Review checklist whose author ticks
+An event-format submission carries a Self-Review checklist whose author ticks
 ``[x]`` items such as "Every number traces to saved evidence". A checked box is a
 claim by the authors about their own paper. When the deterministic checks already
 found a contradicting issue in the mapped family, that self-certification is
@@ -19,7 +19,7 @@ from typing import Any
 from .parser import paper_text
 
 
-# The official Track 1 template uses a TRAILING checkbox ("- label: [ ]") while
+# The event-format template uses a TRAILING checkbox ("- label: [ ]") while
 # the event's example papers use a LEADING one ("- [x] label"). Support both so
 # the audit works on real submissions, not only the local eval fixtures.
 LEADING_CHECKBOX_RE = re.compile(r"^\s*[-*+]\s+\[([ xX])\]\s+(?P<label>.+?)\s*$")

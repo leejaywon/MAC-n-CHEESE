@@ -17,7 +17,7 @@ from reviewer.review_schema import SCIENTIFIC_AXES
 # Neutralize the judgment-layer opt-in so best==audit assertions never depend on
 # the developer's shell having an API key or the retrieval flag exported.
 _DISABLE_JUDGMENT = mock.patch.dict(
-    os.environ, {"OPENAI_API_KEY": "", "RALPH_BEST_RETRIEVAL": ""}, clear=False
+    os.environ, {"OPENAI_API_KEY": "", "REVIEWER_BEST_RETRIEVAL": ""}, clear=False
 )
 
 

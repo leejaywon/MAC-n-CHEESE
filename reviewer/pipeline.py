@@ -1,4 +1,4 @@
-"""Ordered six-stage Track 2 review pipeline."""
+"""Ordered six-stage scientific paper review pipeline."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ STAGE_NAMES = (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-REVIEW_AGENT_PATH = ROOT / "submission" / "review-agent.md"
+REVIEW_AGENT_PATH = ROOT / "specs" / "review-agent-spec.md"
 FREEZE_ID_RE = re.compile(r"^- Frozen review identity: `(?P<value>sha256:[0-9a-f]{64})`\.$", re.M)
 VERDICT_DIGEST_RE = re.compile(r"^- Verdict labels digest: `(?P<value>sha256:[0-9a-f]{64})`\.$", re.M)
 
@@ -178,7 +178,7 @@ def _parse_paper(state: ReviewState) -> ReviewState:
 
 
 def _detect_event_format(parsed_paper: dict[str, object], evidence_dir: Path) -> bool:
-    """Is this an event-format Track 1 submission, or an arbitrary peer paper?
+    """Is this an event-format submission with an evidence ledger, or an arbitrary peer paper?
 
     Event-specific checks (the Markdown template contract, baseline-fairness
     against a ledger) only make sense for THIS event's submission format.
@@ -365,7 +365,7 @@ def _freeze_inputs(state: ReviewState) -> ReviewState:
     if state.evidence_hashes != _evidence_hashes(state.evidence_dir):
         raise RuntimeError("evidence bundle changed while the review pipeline was running")
     if state.review_agent_hash != _sha256_file(state.review_agent_path):
-        raise RuntimeError("review-agent.md changed while the review pipeline was running")
+        raise RuntimeError("review-agent spec changed while the review pipeline was running")
     if state.agent_version != _agent_version():
         raise RuntimeError("reviewer source changed while the review pipeline was running")
 
@@ -407,7 +407,7 @@ def _freeze_inputs(state: ReviewState) -> ReviewState:
 
 def _format_evidence_identity(state: ReviewState) -> str:
     if not state.evidence_hashes:
-        return f"`{state.evidence_dir}` (empty directory)"
+        return "none (no evidence bundle supplied)"
     entries = ", ".join(f"`{name}` (`sha256:{digest}`)" for name, digest in state.evidence_hashes)
     return f"`{state.evidence_dir}`: {entries}"
 
@@ -830,12 +830,12 @@ def _compose_review(state: ReviewState) -> str:
     page_count = str(state.page_count) if state.page_count is not None else "n/a"
     converter = state.converter or "none (Markdown source)"
     scientific_trace = _committee_trace(state)
-    return f"""# Track 2 — ICML-Style Review
+    return f"""# ICML-Style Paper Review
 
 ## Paper and Evidence Identity
 
-- Review Agent name/version: NFL-Auditor / `{state.agent_version}`
-- `review-agent.md` path/hash: `{state.review_agent_path}` / `sha256:{state.review_agent_hash}`
+- Review Agent name/version: paper-reviewer / `{state.agent_version}`
+- Review-agent spec path/hash: `{state.review_agent_path}` / `sha256:{state.review_agent_hash}`
 {original_identity_line}
 {derived_identity_line}
 - Original PDF page count: `{page_count}`
@@ -908,12 +908,12 @@ def _judgment_enabled() -> bool:
     byte-compatible with audit apart from already-established volatile fields.
     """
 
-    return bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("RALPH_BEST_RETRIEVAL"))
+    return bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("REVIEWER_BEST_RETRIEVAL"))
 
 
 def _best_packet_chars() -> int:
     try:
-        return max(8_000, int(os.environ.get("RALPH_BEST_MAX_CHARS", "60000")))
+        return max(8_000, int(os.environ.get("REVIEWER_BEST_MAX_CHARS", "60000")))
     except (TypeError, ValueError):
         return 60_000
 

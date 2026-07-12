@@ -100,7 +100,7 @@ def _fetch_url(url: str) -> bytes:
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "Ralphthon-NFL-Auditor/1.0 (random PDF smoke)",
+            "User-Agent": "paper-review-smoke/1.0 (random PDF smoke)",
             "Accept": "application/pdf, application/atom+xml;q=0.9, */*;q=0.1",
         },
     )

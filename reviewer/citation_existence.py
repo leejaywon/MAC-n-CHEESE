@@ -19,6 +19,8 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
+from .parser import paper_text
+
 
 ARXIV_RE = re.compile(
     r"(?:arxiv\s*:\s*|arxiv\.org/(?:abs|pdf)/)"
@@ -46,7 +48,7 @@ Fetcher = Callable[[str], bytes]
 
 
 def _paper_lines(parsed_paper: dict[str, Any]) -> list[str]:
-    return Path(str(parsed_paper["source_path"])).read_text(encoding="utf-8").splitlines()
+    return paper_text(parsed_paper).splitlines()
 
 
 def _expected_title(line: str, identifier: str) -> str | None:
@@ -126,7 +128,11 @@ def _lookup(
     if path.is_file():
         try:
             cached = json.loads(path.read_text(encoding="utf-8"))
-            if cached.get("schema_version") == 1 and cached.get("status") in {"verified", "not-found"}:
+            if cached.get("schema_version") == 1 and cached.get("status") in {
+                "verified",
+                "not-found",
+                "unavailable",
+            }:
                 return cached, True
         except (OSError, ValueError, TypeError):
             pass
@@ -151,12 +157,17 @@ def _lookup(
         # non-bytes payload must NOT crash the deterministic audit — absence of a
         # response is never evidence a cited work is absent. HTTPException does not
         # subclass OSError, so it has to be named explicitly.
-        return {
+        result = {
             "schema_version": 1,
+            "provider": provider,
+            "identifier": identifier,
             "status": "unavailable",
             "title": None,
             "error": type(error).__name__,
-        }, False
+        }
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
+        return result, False
 
     cached = {"schema_version": 1, "provider": provider, "identifier": identifier, **result}
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -168,16 +179,34 @@ def _citations(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
     citations: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for line_number, line in enumerate(_paper_lines(parsed_paper), start=1):
-        matches: list[tuple[str, str, str]] = []
-        matches.extend(("arxiv", match.group("id"), match.group(0)) for match in ARXIV_RE.finditer(line))
-        matches.extend(("arxiv", match.group("id"), match.group(0)) for match in BRACKET_ARXIV_RE.finditer(line))
-        matches.extend(("s2", match.group("id"), match.group(0)) for match in S2_URL_RE.finditer(line))
-        matches.extend(("s2", f"CorpusId:{match.group('id')}", match.group(0)) for match in CORPUS_RE.finditer(line))
+        matches: list[tuple[str, str, str, int, int]] = []
         matches.extend(
-            ("s2", f"DOI:{match.group('id').rstrip('.,;)')}", match.group(0).rstrip(")"))
+            ("arxiv", match.group("id"), match.group(0), match.start(), match.end())
+            for match in ARXIV_RE.finditer(line)
+        )
+        matches.extend(
+            ("arxiv", match.group("id"), match.group(0), match.start(), match.end())
+            for match in BRACKET_ARXIV_RE.finditer(line)
+        )
+        matches.extend(
+            ("s2", match.group("id"), match.group(0), match.start(), match.end())
+            for match in S2_URL_RE.finditer(line)
+        )
+        matches.extend(
+            ("s2", f"CorpusId:{match.group('id')}", match.group(0), match.start(), match.end())
+            for match in CORPUS_RE.finditer(line)
+        )
+        matches.extend(
+            (
+                "s2",
+                f"DOI:{match.group('id').rstrip('.,;)')}",
+                match.group(0).rstrip(")"),
+                match.start(),
+                match.end(),
+            )
             for match in DOI_RE.finditer(line)
         )
-        for provider, identifier, source_token in matches:
+        for provider, identifier, source_token, column_start, column_end in matches:
             normalized_id = re.sub(r"v\d+$", "", identifier, flags=re.I) if provider == "arxiv" else identifier
             key = provider, normalized_id.casefold()
             if key in seen:
@@ -188,7 +217,11 @@ def _citations(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
                     "provider": provider,
                     "identifier": normalized_id,
                     "expected_title": _expected_title(line, source_token),
-                    "location": {"line": line_number},
+                    "location": {
+                        "line": line_number,
+                        "column_start": column_start + 1,
+                        "column_end": column_end,
+                    },
                 }
             )
     return citations

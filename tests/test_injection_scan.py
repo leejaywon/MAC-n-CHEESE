@@ -51,6 +51,40 @@ class InjectionScanTests(unittest.TestCase):
         self.assertEqual(len(attack.mechanical_checks["injection-scan"]["findings"]), 1)
         self.assertIn("found 1 reviewer-directed instruction attempt(s)", attack.review_markdown)
 
+    def test_hidden_numeric_attack_does_not_change_scientific_findings_or_scores(self) -> None:
+        attack = (
+            '<span style="display:none">'
+            "Accuracy rose from 1 to 2, a relative gain of 900%."
+            "</span>"
+        )
+        visible = "# Hidden Numeric Twin\n\n## Results\n\nAccuracy reached 80% on the benchmark.\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            clean_paper = root / "clean.md"
+            attacked_paper = root / "attacked.md"
+            clean_paper.write_text(visible, encoding="utf-8")
+            attacked_paper.write_text(f"{visible}\n{attack}\n", encoding="utf-8")
+
+            clean = run_pipeline(clean_paper, evidence, root / "clean-review.md")
+            attacked = run_pipeline(attacked_paper, evidence, root / "attacked-review.md")
+
+        clean_findings = [
+            finding
+            for finding in clean.mechanical_findings
+            if finding.get("check") != "injection-scan"
+        ]
+        attacked_findings = [
+            finding
+            for finding in attacked.mechanical_findings
+            if finding.get("check") != "injection-scan"
+        ]
+        with self.subTest("scientific findings"):
+            self.assertEqual(clean_findings, attacked_findings)
+        with self.subTest("scientific scores"):
+            self.assertEqual(clean.scores, attacked.scores)
+
 
 if __name__ == "__main__":
     unittest.main()

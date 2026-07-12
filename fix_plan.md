@@ -43,7 +43,7 @@ Spec: `specs/review-agent-spec.md`. Milestone descriptions live there (§8).
       ledger. The score drops (bar rose — re-baseline, do NOT revert per
       PROMPT §4). Then strengthen the weakest check until it catches the case.
       This is honest detection headroom the deterministic reviewer can close.
-- [ ] M10b: deterministic scientific scaffolding (spec §4b — the [deterministic]
+- [x] M10b: deterministic scientific scaffolding (spec §4b — the [deterministic]
       items ONLY). SESSION-3 PARTIAL: positioning-lite is DONE (reviewer/positioning.py:
       related-work presence + novelty/SOTA overclaim → Weakness + Contribution↓;
       derived critique, kept out of detection/FP) and the single-run/no-variance
@@ -187,5 +187,25 @@ mechanical findings are ~0 (correct — this is fairness, not a miss); positioni
 self-suppresses on all 7; best-mode retrieval/model surface the positioning
 questions. Attention: 1 comparator-less-superiority positioning Question.
 
-Genuinely remaining for the loop: M10b remainder (claim-scope-vs-ledger note +
-one templated follow-up per Weakness); M12 hill-climb.
+Hardening pass (2026-07-12): sanitize-first canonical PDF/Markdown identity,
+external citation snapshot freeze, span-aware verdict attribution, direct
+six-field competition scores, substantive best-mode prompt, live guidance
+adapter, and replayable fresh-random PDF smoke implemented. M12 remains the
+repeatable optional hill-climb.
+
+## Session 4 (urgent — real scientific committee and ten-paper deployment)
+
+- [x] C1: replace the single prompt that impersonates multiple reviewers with
+      three actual concurrent specialist calls (theorist, experimentalist,
+      scope/ablation) and one grounded area-chair meta-review.
+- [x] C2: merge validated scientific judgment into the official review and
+      permit evidence-grounded score increases or decreases while preserving
+      deterministic integrity caps and per-paper fallback.
+- [x] C3: require and safely resume the fixed ten-assignment API flow, including
+      partially submitted states and exact ordinal validation.
+- [ ] C4: defer regression, integration, and timed ten-paper execution until
+      after the code-only deadline pass; do not claim deployment verification
+      before those checks run.
+- [x] C5: quarantine low-contrast, transparent, sub-pixel, and non-rendering PDF
+      text before Markdown extraction so concealed numeric payloads cannot enter
+      claims, scores, or committee prompts.

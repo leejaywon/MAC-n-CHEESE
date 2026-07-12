@@ -84,6 +84,24 @@ class CitationExistenceTests(unittest.TestCase):
         self.assertEqual(result["findings"], [])
         self.assertEqual(result["traces"][0]["status"], "unavailable")
 
+    def test_unavailable_state_is_frozen_in_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parsed = _parse(root, "# References\n\narXiv:1706.03762\n")
+            first = check_citation_existence(
+                parsed,
+                root / "cache",
+                lambda _: (_ for _ in ()).throw(TimeoutError()),
+            )
+            second = check_citation_existence(
+                parsed,
+                root / "cache",
+                lambda _: (_ for _ in ()).throw(AssertionError("network used")),
+            )
+
+        self.assertEqual(first["traces"][0]["status"], "unavailable")
+        self.assertTrue(second["traces"][0]["cache_hit"])
+
     def test_truncated_read_does_not_crash_the_audit(self) -> None:
         # http.client.IncompleteRead (server closed the connection early) is NOT
         # an OSError. This lookup runs in the deterministic AUDIT path, so an

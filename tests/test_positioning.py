@@ -68,6 +68,11 @@ class PositioningCheckTests(unittest.TestCase):
         self.assertTrue(result["signals"]["has_related_work_section"])
         self.assertEqual(result["findings"], [])
 
+    def test_empty_references_heading_does_not_count_as_positioning(self) -> None:
+        result = check_positioning(_parse("# Unsupported Study\n\n## References\n"))
+
+        self.assertIs(result["signals"]["positioned"], False)
+
     # --- softer gap -> Question, never accusation ----------------------------
 
     def test_comparatorless_superiority_on_positioned_paper_is_a_question(self) -> None:
@@ -143,8 +148,8 @@ class PositioningCheckTests(unittest.TestCase):
         claims = extract_claims(parsed)
         verdicts, _ = label_verdicts(claims, {}, [])
         scores = calibrate_scores(claims, verdicts, [], positioning=positioning)
-        self.assertEqual(scores["Contribution"]["value"], 1)
-        self.assertIn("no cited prior work", scores["Contribution"]["rationale"])
+        self.assertEqual(scores["Originality"]["value"], 1)
+        self.assertIn("no cited prior work", scores["Originality"]["rationale"])
 
     def test_contribution_stays_borderline_without_overclaim(self) -> None:
         parsed = _parse("# Study\n\nAccuracy was 75.0 across three seeds.\n")
@@ -152,7 +157,7 @@ class PositioningCheckTests(unittest.TestCase):
         claims = extract_claims(parsed)
         verdicts, _ = label_verdicts(claims, {}, [])
         scores = calibrate_scores(claims, verdicts, [], positioning=positioning)
-        self.assertEqual(scores["Contribution"]["value"], 2)
+        self.assertEqual(scores["Originality"]["value"], 2)
 
     # --- end-to-end through the pipeline -------------------------------------
 
@@ -172,7 +177,7 @@ class PositioningCheckTests(unittest.TestCase):
             state = run_pipeline(peer, evidence, root / "review.md")
         self.assertIn("Positioning —", state.review_markdown)
         self.assertIn("S3 positioning:", state.review_markdown)
-        self.assertEqual(state.scores["Contribution"]["value"], 1)
+        self.assertEqual(state.scores["Originality"]["value"], 1)
         # A crafted overclaim must not leak into the mechanical-detection eval.
         self.assertNotIn("positioning", {finding.get("check") for finding in state.mechanical_findings})
         _ = paper  # anchor for readers: clean event papers self-suppress (see eval)

@@ -157,6 +157,26 @@ class NoveltyPositioningTests(unittest.TestCase):
         self.assertTrue(longformer["already_cited"])
         self.assertFalse(any("2004.05150" in question["text"] for question in result["questions"]))
 
+    def test_post_date_work_is_not_presented_as_missing_prior_art(self) -> None:
+        directory = Path(tempfile.mkdtemp(prefix="ralphthon-novelty-cutoff-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        (directory / "paper.md").write_text(
+            "# Sparse Attention for Language Modeling\n\n"
+            "Frozen submission date: 2016-01-01.\n\n"
+            "## Abstract\n\nWe propose novel sparse attention for transformer language modeling.\n",
+            encoding="utf-8",
+        )
+        parsed = parse_markdown(directory / "paper.md")
+        result = check_novelty_positioning(
+            parsed,
+            cache_dir=directory / "cache",
+            fetch=lambda url: SEARCH_FEED,
+        )
+        attention = next(trace for trace in result["traces"] if trace["id"] == "1706.03762")
+        self.assertEqual(attention["temporal_relation"], "concurrent-or-post-date")
+        question = next(item for item in result["questions"] if "1706.03762" in item["text"])
+        self.assertIn("concurrent/post-date", question["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,10 +9,9 @@ label; everything else remains ``unverifiable``.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any
 
-from .injection_scan import sanitize_for_analysis
+from .parser import paper_text
 
 
 ARITHMETIC_RE = re.compile(
@@ -119,10 +118,7 @@ def _is_junk_claim(text: str) -> bool:
 def extract_claims(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract declarative prose and result-table rows with stable locations."""
 
-    source = Path(str(parsed_paper["source_path"]))
-    # Hidden paper-authored instructions are DATA for the injection audit, not
-    # claims for S2 or commands for any later stage.
-    lines = sanitize_for_analysis(source.read_text(encoding="utf-8")).splitlines()
+    lines = paper_text(parsed_paper).splitlines()
     table_by_line: dict[int, dict[str, Any]] = {}
     table_lines: set[int] = set()
     for table in parsed_paper.get("tables", []):
@@ -222,6 +218,43 @@ def _finding_records(mechanical_findings: list[dict[str, Any]]) -> list[dict[str
     return [{"id": f"finding-{index:03d}", **finding} for index, finding in enumerate(ordered, 1)]
 
 
+_CLAIM_CHECK_TYPES = {
+    "arithmetic": {"result", "arithmetic"},
+    "ledger-trace": {"result", "arithmetic"},
+    "internal-consistency": {"result", "arithmetic"},
+    "baseline-fairness": {"result", "arithmetic"},
+    "citation-existence": {"general", "method", "result", "arithmetic", "hypothesis"},
+}
+
+
+def _finding_applies_to_claim(finding: dict[str, Any], claim: dict[str, Any]) -> bool:
+    """Return whether a localized finding actually contradicts this claim.
+
+    Findings about the document as a whole (template, injection, omitted negative
+    evidence) must not turn an arbitrary same-line sentence into a contradiction.
+    Where both records expose columns, require source-span overlap.
+    """
+
+    check = str(finding.get("check", ""))
+    allowed_types = _CLAIM_CHECK_TYPES.get(check)
+    if allowed_types is None or claim.get("type") not in allowed_types:
+        return False
+    if check == "citation-existence" and not claim.get("refs"):
+        return False
+    finding_location = finding.get("location")
+    claim_location = claim.get("location", {})
+    if _location_line(finding_location) != claim_location.get("line"):
+        return False
+    if isinstance(finding_location, dict):
+        finding_start = finding_location.get("column_start")
+        finding_end = finding_location.get("column_end")
+        claim_start = claim_location.get("column_start")
+        claim_end = claim_location.get("column_end")
+        if all(isinstance(value, int) for value in (finding_start, finding_end, claim_start, claim_end)):
+            return max(finding_start, claim_start) <= min(finding_end, claim_end)
+    return True
+
+
 def label_verdicts(
     claims: list[dict[str, Any]],
     mechanical_checks: dict[str, dict[str, Any]],
@@ -243,9 +276,7 @@ def label_verdicts(
     verdicts: list[dict[str, Any]] = []
     for claim in claims:
         line = int(claim["location"]["line"])
-        relevant_findings = [
-            finding for finding in findings if _location_line(finding.get("location")) == line
-        ]
+        relevant_findings = [finding for finding in findings if _finding_applies_to_claim(finding, claim)]
         evidence: list[str] = []
         if relevant_findings:
             label = "contradicted"

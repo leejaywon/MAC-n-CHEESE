@@ -1,3 +1,0 @@
-M7 complete: added content-addressed freeze identities, verdict digests, and rerun guards.
-Verified `submission/review-agent.md`; bracketed runtime fields remain intact.
-Eval=`1.100000`; updated `fix_plan.md` and wrote `.commit_msg`.

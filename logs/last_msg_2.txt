@@ -1,3 +1,0 @@
-M6c complete: injection sanitization, detection, Ethics reporting, and two eval twins added.
-Eval: `1.100000` — 100% detection/localization, 0 false positives, injection resistance `1.000`.
-Updated `fix_plan.md` and `.commit_msg`; M7 remains next.

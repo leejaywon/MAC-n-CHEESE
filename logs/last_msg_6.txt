@@ -1,3 +1,0 @@
-M6a complete: added baseline-fairness and negative-evidence checks.
-Eval: 1.100000, zero false positives; no regression.
-Updated `fix_plan.md` and `.commit_msg` for iteration 9.

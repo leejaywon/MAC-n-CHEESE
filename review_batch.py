@@ -40,7 +40,7 @@ def _review_one(job: tuple[str, str, str, str]) -> dict[str, object]:
     started = time.time()
     try:
         # A .pdf set member is converted to Markdown first (next to its review).
-        source = convert_to_markdown(Path(paper), Path(out_path).with_suffix(".source.md"))
+        source = convert_to_markdown(Path(paper), Path(out_path).parent / f"{Path(paper).stem}.source.md")
         state = run_pipeline(source, Path(evidence_dir), Path(out_path), mode=mode)
         return {
             "paper": Path(paper).name,
@@ -69,9 +69,15 @@ def main() -> int:
     if args.mode == "best":
         _load_dotenv(ROOT / ".env")
 
-    papers = sorted(
-        path for path in args.papers_dir.iterdir() if path.suffix.lower() in {".pdf", ".md", ".markdown"}
-    )
+    # Prefer the PDF when a converted .md sidecar sits next to it, so a paper that
+    # was already run through run_review.py is never reviewed twice in a batch.
+    by_stem: dict[str, Path] = {}
+    for path in sorted(args.papers_dir.iterdir()):
+        if path.suffix.lower() not in {".pdf", ".md", ".markdown"}:
+            continue
+        if path.stem not in by_stem or path.suffix.lower() == ".pdf":
+            by_stem[path.stem] = path
+    papers = sorted(by_stem.values())
     if not papers:
         parser.error(f"no .pdf or .md papers in {args.papers_dir}")
     args.out_dir.mkdir(parents=True, exist_ok=True)

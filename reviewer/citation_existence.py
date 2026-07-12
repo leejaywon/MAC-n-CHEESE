@@ -212,14 +212,20 @@ def check_citation_existence(
         trace = {**citation, **result, "cache_hit": cache_hit}
         traces.append(trace)
         evidence_path = result.get("url", f"{citation['provider']} API unavailable")
-        if result["status"] == "not-found":
+        if result["status"] == "not-found" and citation["provider"] == "arxiv":
+            # Only the arXiv API is authoritative for its own ids, so a not-found
+            # there is a real defect (a fabricated arXiv id). Semantic Scholar does
+            # NOT index every DOI — a 404 for an old or niche DOI (e.g. a 1951
+            # statistics paper) is not proof the work is absent, so it is not a
+            # finding. A title MISMATCH (a record that exists but names a different
+            # paper) is still reported below for every provider.
             findings.append(
                 {
                     "check": "citation-existence",
                     "severity": "error",
                     "location": citation["location"],
                     "expected": f"a published record for {citation['identifier']}",
-                    "observed": "the authoritative identifier lookup returned no record",
+                    "observed": "the arXiv API returned no record for this identifier",
                     "evidence_path": evidence_path,
                 }
             )

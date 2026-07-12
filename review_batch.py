@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from reviewer import run_pipeline
+from reviewer.to_markdown import convert_to_markdown
 
 ROOT = Path(__file__).resolve().parent
 
@@ -38,7 +39,9 @@ def _review_one(job: tuple[str, str, str, str]) -> dict[str, object]:
     paper, evidence_dir, out_path, mode = job
     started = time.time()
     try:
-        state = run_pipeline(Path(paper), Path(evidence_dir), Path(out_path), mode=mode)
+        # A .pdf set member is converted to Markdown first (next to its review).
+        source = convert_to_markdown(Path(paper), Path(out_path).with_suffix(".source.md"))
+        state = run_pipeline(source, Path(evidence_dir), Path(out_path), mode=mode)
         return {
             "paper": Path(paper).name,
             "ok": True,
@@ -51,7 +54,7 @@ def _review_one(job: tuple[str, str, str, str]) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Review every *.md paper in a directory in parallel.")
-    parser.add_argument("papers_dir", type=Path, help="directory of paper .md files")
+    parser.add_argument("papers_dir", type=Path, help="directory of paper .pdf/.md files (one per set)")
     parser.add_argument("--out-dir", required=True, type=Path, help="where to write the review .md files")
     parser.add_argument(
         "--evidence-root",
@@ -66,9 +69,11 @@ def main() -> int:
     if args.mode == "best":
         _load_dotenv(ROOT / ".env")
 
-    papers = sorted(args.papers_dir.glob("*.md"))
+    papers = sorted(
+        path for path in args.papers_dir.iterdir() if path.suffix.lower() in {".pdf", ".md", ".markdown"}
+    )
     if not papers:
-        parser.error(f"no .md papers in {args.papers_dir}")
+        parser.error(f"no .pdf or .md papers in {args.papers_dir}")
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="review-batch-empty-") as empty_evidence:
@@ -76,7 +81,7 @@ def main() -> int:
         for paper in papers:
             sibling = args.evidence_root / paper.stem if args.evidence_root else None
             evidence = str(sibling) if sibling and sibling.is_dir() else empty_evidence
-            jobs.append((str(paper), evidence, str(args.out_dir / paper.name), args.mode))
+            jobs.append((str(paper), evidence, str(args.out_dir / f"{paper.stem}.review.md"), args.mode))
 
         wall_start = time.time()
         with concurrent.futures.ProcessPoolExecutor(max_workers=args.workers) as executor:

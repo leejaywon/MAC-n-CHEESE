@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 from reviewer import run_pipeline
+from reviewer.to_markdown import convert_to_markdown
 
 
 def _load_dotenv(path: Path) -> None:
@@ -36,7 +37,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Review a frozen Track 1 paper against its evidence bundle."
     )
-    parser.add_argument("paper", type=Path, help="path to the frozen paper")
+    parser.add_argument("paper", type=Path, help="path to the frozen paper (.pdf or .md)")
     parser.add_argument("evidence_dir", type=Path, help="path to its evidence bundle")
     parser.add_argument("--out", required=True, type=Path, help="review Markdown output path")
     parser.add_argument(
@@ -56,7 +57,10 @@ def main() -> int:
     _load_dotenv(Path(__file__).resolve().parent / ".env")
     args = _parser().parse_args()
     try:
-        state = run_pipeline(args.paper, args.evidence_dir, args.out, mode=args.mode)
+        paper = convert_to_markdown(args.paper)
+        if paper != args.paper:
+            print(f"converted {args.paper} -> {paper}")
+        state = run_pipeline(paper, args.evidence_dir, args.out, mode=args.mode)
     except (FileNotFoundError, NotADirectoryError, RuntimeError, ValueError) as error:
         _parser().error(str(error))
     print(f"wrote {state.output_path} [mode={state.mode}] ({', '.join(state.completed_stages)})")

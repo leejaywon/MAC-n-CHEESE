@@ -22,6 +22,7 @@ from .negative_evidence import check_negative_evidence
 from .novelty_positioning import check_novelty_positioning
 from .parser import parse_markdown
 from .positioning import check_positioning
+from .rigor_checklist import rigor_checklist_questions
 from .scientific_scaffolding import rigor_questions
 from .self_review_audit import check_self_review_consistency
 from .template_compliance import check_template_compliance
@@ -316,6 +317,11 @@ def _compose_review(state: ReviewState) -> str:
     # Deterministic scientific scaffolding: fair, model-free Questions that add
     # review substance on evidence-poor papers (self-suppresses on rigorous ones).
     for question in rigor_questions(state.parsed_paper):
+        comments_by_section["Questions for the Authors"].append(question)
+    # ICML/NeurIPS reproducibility & limitations checklist: one consolidated
+    # Question about missing items (code/data, hyperparameters, compute,
+    # limitations, broader impact), self-suppressing on a thorough paper.
+    for question in rigor_checklist_questions(state.parsed_paper):
         comments_by_section["Questions for the Authors"].append(question)
 
     def render_comments(section: str, empty: str) -> str:

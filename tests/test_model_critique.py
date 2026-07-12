@@ -9,7 +9,9 @@ raise is refused, and malformed output degrades to empty.
 from __future__ import annotations
 
 import json
+import os
 import unittest
+from unittest import mock
 
 from reviewer.model_critique import critique
 
@@ -19,7 +21,14 @@ GROUNDING = {
     "claim_ids": ["claim-001"],
     "arxiv_ids": ["arxiv:1706.03762"],
 }
-ANCHORS = {"Soundness": 3, "Contribution": 2, "Overall recommendation": 4}
+ANCHORS = {
+    "Soundness": 3,
+    "Presentation": 2,
+    "Significance": 2,
+    "Originality": 2,
+    "Overall recommendation": 4,
+    "Confidence": 3,
+}
 
 
 def _client(response: dict):
@@ -94,16 +103,28 @@ class ModelCritiqueTests(unittest.TestCase):
             {
                 "items": [],
                 "calibration": {
-                    "Soundness": {"value": 1, "reason": "unproven headline"},
-                    "Contribution": {"value": 4, "reason": "over-generous"},
-                    "Overall recommendation": {"value": 4, "reason": "unchanged"},
+                    "Soundness": {
+                        "value": 1,
+                        "reason": "unproven headline",
+                        "grounding": "finding-001",
+                    },
+                    "Originality": {
+                        "value": 4,
+                        "reason": "over-generous",
+                        "grounding": "finding-001",
+                    },
+                    "Overall recommendation": {
+                        "value": 4,
+                        "reason": "unchanged",
+                        "grounding": "finding-001",
+                    },
                 },
             }
         )
         # lowering applied
         self.assertEqual(result["calibration"]["Soundness"]["value"], 1)
         # a raise (4 > anchor 2) is refused
-        self.assertNotIn("Contribution", result["calibration"])
+        self.assertNotIn("Originality", result["calibration"])
         # an equal value (4 == anchor 4) is not a lowering
         self.assertNotIn("Overall recommendation", result["calibration"])
 
@@ -128,6 +149,20 @@ class ModelCritiqueTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["model"])
         self.assertEqual(len(result["prompt_sha256"]), 64)
+
+    def test_prompt_keeps_late_high_priority_sections_beyond_old_prefix(self) -> None:
+        client = _client({"summary": "Summary", "items": [], "calibration": {}})
+        paper = "# Title\n\n" + ("ordinary body text " * 900) + "\n\n## References\n\nTAIL-MARKER-REF\n"
+        with mock.patch.dict(os.environ, {"RALPH_BEST_MAX_CHARS": "8000"}, clear=False):
+            result = critique(
+                sanitized_paper=paper,
+                grounding=GROUNDING,
+                anchor_scores=ANCHORS,
+                api_key="sk-test",
+                client=client,
+            )
+        self.assertTrue(result["ok"])
+        self.assertIn("TAIL-MARKER-REF", client.messages[-1]["content"])
 
 
 if __name__ == "__main__":

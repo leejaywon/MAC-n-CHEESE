@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass, field
+import time
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -14,15 +15,26 @@ from typing import Any, Callable
 from .baseline_fairness import check_baseline_fairness
 from .citation_existence import check_citation_existence
 from .claims import extract_claims, label_verdicts
-from .composer import calibrate_scores, draft_comments, ground_comments, normalize_overall
-from .injection_scan import check_injection_scan, sanitize_for_analysis
+from .composer import (
+    apply_scientific_scores,
+    calibrate_scores,
+    draft_comments,
+    ground_comments,
+)
+from .document import PreparedPaper, SourceIdentity, prepare_paper
+from .injection_scan import check_injection_scan, scan_and_sanitize
 from .mechanical_checks import check_arithmetic, check_internal_consistency, check_ledger_trace
-from .model_critique import critique as _model_critique
+from .model_critique import (
+    committee_review as _committee_review,
+    compute_judgment_identity,
+)
 from .negative_evidence import check_negative_evidence
 from .novelty_positioning import check_novelty_positioning
 from .parser import parse_markdown
 from .positioning import check_positioning
+from .review_schema import ScientificJudgment
 from .rigor_checklist import rigor_checklist_questions
+from .scientific_review import build_evidence_packet, validate_judgment
 from .scientific_scaffolding import rigor_questions
 from .self_review_audit import check_self_review_consistency
 from .template_compliance import check_template_compliance
@@ -54,10 +66,18 @@ class ReviewState:
     review_agent_path: Path = REVIEW_AGENT_PATH
     review_agent_hash: str = ""
     paper_hash: str = ""
+    prepared_paper: PreparedPaper | None = None
+    original_identity: SourceIdentity | None = None
+    derived_identity: SourceIdentity | None = None
+    page_count: int | None = None
+    converter: str | None = None
+    sanitation_traces: list[dict[str, object]] = field(default_factory=list)
+    injection_findings: list[dict[str, object]] = field(default_factory=list)
     evidence_hashes: list[tuple[str, str]] = field(default_factory=list)
     frozen_at: str = ""
     review_identity: str = ""
     verdict_digest: str = ""
+    external_snapshot_digest: str = ""
     completed_stages: list[str] = field(default_factory=list)
     parsed_paper: dict[str, object] = field(default_factory=dict)
     claims: list[dict[str, Any]] = field(default_factory=list)
@@ -72,6 +92,10 @@ class ReviewState:
     review_markdown: str = ""
     mode: str = "audit"
     judgment: dict[str, Any] = field(default_factory=dict)
+    scientific_judgment: ScientificJudgment | None = None
+    judgment_identity: str = ""
+    judgment_error: str = ""
+    committee_provenance: dict[str, Any] = field(default_factory=dict)
     event_format: bool = True
 
 
@@ -94,6 +118,14 @@ def _evidence_hashes(evidence_dir: Path) -> list[tuple[str, str]]:
 def _canonical_digest(value: object) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "sha256:" + sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _content_identity(identity: SourceIdentity) -> dict[str, object]:
+    """Freeze source content/provenance without binding identity to a local path."""
+
+    value = asdict(identity)
+    value.pop("path", None)
+    return value
 
 
 def _agent_version() -> str:
@@ -135,7 +167,12 @@ def _mark_stage(state: ReviewState, name: str) -> ReviewState:
 
 
 def _parse_paper(state: ReviewState) -> ReviewState:
-    state.parsed_paper = parse_markdown(state.paper_path)
+    if state.prepared_paper is None:
+        raise RuntimeError("paper was not prepared before S1")
+    state.parsed_paper = parse_markdown(
+        state.paper_path,
+        text=state.prepared_paper.analysis_text,
+    )
     return _mark_stage(state, "S1 parse")
 
 
@@ -161,15 +198,28 @@ def _detect_event_format(parsed_paper: dict[str, object], evidence_dir: Path) ->
 
 def _run_mechanical_checks(state: ReviewState) -> ReviewState:
     state.event_format = _detect_event_format(state.parsed_paper, state.evidence_dir)
+    injection_result = {
+        "check": "injection-scan",
+        "traces": state.sanitation_traces,
+        "findings": state.injection_findings,
+    }
+    citation_check = check_citation_existence(state.parsed_paper)
+    snapshot_fields = ("provider", "identifier", "status", "title", "url", "error")
+    state.external_snapshot_digest = _canonical_digest(
+        [
+            {key: trace.get(key) for key in snapshot_fields if key in trace}
+            for trace in citation_check.get("traces", [])
+        ]
+    )
     checks = (
         check_ledger_trace(state.parsed_paper, state.evidence_dir, state.event_format),
         check_internal_consistency(state.parsed_paper),
         check_arithmetic(state.parsed_paper),
         check_baseline_fairness(state.parsed_paper, state.evidence_dir),
         check_negative_evidence(state.parsed_paper, state.evidence_dir),
-        check_citation_existence(state.parsed_paper),
+        citation_check,
         check_template_compliance(state.parsed_paper, state.event_format),
-        check_injection_scan(state.parsed_paper),
+        check_injection_scan(state.parsed_paper, precomputed=injection_result),
     )
     for result in checks:
         state.mechanical_checks[result["check"]] = result
@@ -202,10 +252,78 @@ def _label_verdicts(state: ReviewState) -> ReviewState:
     return _mark_stage(state, "S4 verdicts")
 
 
+def _source_identity_matches(identity: SourceIdentity) -> bool:
+    path = Path(identity.path)
+    return (
+        path.is_file()
+        and path.stat().st_size == identity.byte_length
+        and _sha256_file(path) == identity.sha256
+    )
+
+
+def _validate_prepared_paper(requested_path: Path, prepared: PreparedPaper) -> None:
+    original_path = Path(prepared.original.path)
+    markdown_path = Path(prepared.markdown.path)
+    if requested_path not in {original_path, markdown_path}:
+        raise ValueError("prepared paper does not describe the requested paper path")
+    if prepared.markdown.media_type != "text/markdown":
+        raise ValueError("prepared paper must expose a Markdown analysis identity")
+    if markdown_path.suffix.lower() not in {".md", ".markdown"}:
+        raise ValueError("prepared Markdown identity has an unsupported path suffix")
+    if not _source_identity_matches(prepared.original):
+        raise ValueError("prepared original identity does not match the source file")
+    if not _source_identity_matches(prepared.markdown):
+        raise ValueError("prepared Markdown identity does not match the derived file")
+    try:
+        markdown_text = markdown_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"paper is not valid UTF-8 Markdown: {markdown_path}") from error
+    if markdown_text != prepared.raw_text:
+        raise ValueError("prepared raw text does not match the Markdown source")
+
+    if prepared.original.media_type == "text/markdown":
+        if prepared.original != prepared.markdown or prepared.converter is not None:
+            raise ValueError("Markdown preparation must use one source identity and no converter")
+    elif prepared.original.media_type == "application/pdf":
+        import pymupdf
+
+        with pymupdf.open(original_path) as document:
+            if document.page_count != prepared.original.page_count:
+                raise ValueError("prepared PDF page count does not match the source")
+        if prepared.converter is None:
+            raise ValueError("prepared PDF is missing converter provenance")
+    else:
+        raise ValueError(f"unsupported original media type: {prepared.original.media_type!r}")
+
+    analysis_text, traces, findings = scan_and_sanitize(
+        prepared.raw_text,
+        original_path.name,
+    )
+    if (
+        analysis_text != prepared.analysis_text
+        or traces != prepared.sanitation_traces
+        or findings != prepared.injection_findings
+    ):
+        raise ValueError("prepared sanitation records do not match the Markdown source")
+
+
 def _freeze_inputs(state: ReviewState) -> ReviewState:
     # Hash once before S1 and verify again at S6 so a mid-run input mutation is
     # never silently accepted as part of the frozen review identity.
-    if state.paper_hash != _sha256_file(state.paper_path):
+    prepared = state.prepared_paper
+    if prepared is None:
+        raise RuntimeError("paper preparation record is missing at freeze")
+    if (
+        state.original_identity != prepared.original
+        or state.derived_identity != prepared.markdown
+        or state.page_count != prepared.original.page_count
+        or state.converter != prepared.converter
+        or state.sanitation_traces != list(prepared.sanitation_traces)
+        or state.injection_findings != list(prepared.injection_findings)
+        or not _source_identity_matches(prepared.original)
+        or not _source_identity_matches(prepared.markdown)
+        or state.paper_hash != prepared.markdown.sha256
+    ):
         raise RuntimeError("paper changed while the review pipeline was running")
     if state.evidence_hashes != _evidence_hashes(state.evidence_dir):
         raise RuntimeError("evidence bundle changed while the review pipeline was running")
@@ -216,11 +334,15 @@ def _freeze_inputs(state: ReviewState) -> ReviewState:
 
     state.review_identity = _canonical_digest(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "agent_version": state.agent_version,
             "review_agent_hash": state.review_agent_hash,
             "paper_hash": state.paper_hash,
+            "original_identity": _content_identity(prepared.original),
+            "derived_identity": _content_identity(prepared.markdown),
+            "converter": prepared.converter,
             "evidence_hashes": state.evidence_hashes,
+            "external_snapshot_digest": state.external_snapshot_digest,
         }
     )
     # The task's determinism contract is specifically about S4 labels. Keep a
@@ -253,6 +375,13 @@ def _format_evidence_identity(state: ReviewState) -> str:
     return f"`{state.evidence_dir}`: {entries}"
 
 
+def _format_source_identity(label: str, identity: SourceIdentity) -> str:
+    return (
+        f"- {label}: `{identity.path}` / `{identity.media_type}` / "
+        f"`sha256:{identity.sha256}` / `{identity.byte_length}` bytes"
+    )
+
+
 CONTRIBUTION_RE = re.compile(
     r"\b(?:our\s+(?:main\s+|key\s+|primary\s+)?contribution|we\s+(?:propose|present|introduce|develop|"
     r"show|demonstrate)|in\s+this\s+(?:paper|work)|this\s+(?:paper|work)\s+(?:proposes|presents|introduces))\b",
@@ -282,9 +411,96 @@ def _contribution_sentence(claims: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _grounding_ids(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, tuple):
+        return tuple(item for item in value if isinstance(item, str))
+    return ()
+
+
+def _scientific_comment_text(comment: object) -> str:
+    text = re.sub(
+        r"\s+",
+        " ",
+        str(getattr(comment, "text", "")).strip(),
+    )
+    grounding = ", ".join(_grounding_ids(getattr(comment, "grounding", ())))
+    return f"{text} [{grounding}]" if grounding else text
+
+
+def _scientific_question_text(question: object) -> str:
+    text = _scientific_comment_text(question)
+    assessment = re.sub(
+        r"\s+",
+        " ",
+        str(getattr(question, "assessment_if_resolved", "")).strip(),
+    )
+    return (
+        f"{text} Assessment if resolved: {assessment}"
+        if assessment
+        else text
+    )
+
+
+def _trace_scalar(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip().replace("`", "'")
+
+
+def _committee_trace(state: ReviewState) -> str:
+    """Render compact four-call provenance only when best mode attempted it."""
+
+    provenance = state.committee_provenance
+    if not provenance and not state.judgment_error and not state.judgment_identity:
+        return ""
+    lines: list[str] = []
+    if state.judgment_identity:
+        lines.append(f"- Scientific judgment identity: `{state.judgment_identity}`.")
+    committee_identity = provenance.get("committee_identity") if isinstance(provenance, dict) else None
+    if committee_identity and committee_identity != state.judgment_identity:
+        lines.append(f"- Scientific committee identity: `{committee_identity}`.")
+    if isinstance(provenance, dict) and provenance:
+        rubric = _trace_scalar(provenance.get("rubric_version")) or "unknown"
+        workers = _trace_scalar(provenance.get("workers")) or "unknown"
+        timeout = _trace_scalar(provenance.get("timeout_seconds")) or "unknown"
+        lines.append(
+            f"- Scientific committee configuration: rubric=`{rubric}`, "
+            f"workers={workers}, timeout={timeout}s."
+        )
+
+    calls: list[dict[str, Any]] = []
+    raw_specialists = provenance.get("specialists", []) if isinstance(provenance, dict) else []
+    if isinstance(raw_specialists, list):
+        calls.extend(call for call in raw_specialists if isinstance(call, dict))
+    raw_meta = provenance.get("meta") if isinstance(provenance, dict) else None
+    if isinstance(raw_meta, dict):
+        calls.append(raw_meta)
+    for call in calls:
+        role = _trace_scalar(call.get("role")) or "unknown"
+        model = _trace_scalar(call.get("model")) or "unknown"
+        prompt_hash = _trace_scalar(call.get("prompt_sha256")) or "unavailable"
+        response_hash = _trace_scalar(call.get("response_sha256")) or "unavailable"
+        status = "ok" if call.get("ok") else "failed"
+        error = _trace_scalar(call.get("error"))
+        suffix = f", error={error}" if error else ""
+        lines.append(
+            f"- Scientific committee `{role}`: model=`{model}`, "
+            f"prompt=`sha256:{prompt_hash}`, response=`sha256:{response_hash}`, "
+            f"status={status}{suffix}."
+        )
+    if state.judgment_error:
+        lines.append(
+            "- Scientific committee fallback: deterministic review and scores "
+            f"retained ({_trace_scalar(state.judgment_error)})."
+        )
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 def _compose_review(state: ReviewState) -> str:
     """Return the official review shape after DRAFT and authoritative GROUND."""
 
+    if state.original_identity is None or state.derived_identity is None:
+        raise RuntimeError("source identities are missing from review state")
     stage_trace = " -> ".join(STAGE_NAMES)
     section_count = len(state.parsed_paper.get("sections", []))
     table_count = len(state.parsed_paper.get("tables", []))
@@ -369,8 +585,15 @@ def _compose_review(state: ReviewState) -> str:
         comments_by_section["Questions for the Authors"].append(question)
     # Deterministic scientific scaffolding: fair, model-free Questions that add
     # review substance on evidence-poor papers (self-suppresses on rigorous ones).
-    for question in rigor_questions(state.parsed_paper):
-        comments_by_section["Questions for the Authors"].append(question)
+    for scaffold in rigor_questions(
+        state.parsed_paper,
+        state.evidence_dir,
+        state.finding_records,
+    ):
+        section = str(scaffold.get("section", "Questions for the Authors"))
+        if section not in comments_by_section:
+            section = "Questions for the Authors"
+        comments_by_section[section].append(scaffold)
     # ICML/NeurIPS reproducibility & limitations checklist: one consolidated
     # Question about missing items (code/data, hyperparameters, compute,
     # limitations, broader impact), self-suppressing on a thorough paper.
@@ -391,34 +614,53 @@ def _compose_review(state: ReviewState) -> str:
                     f"({citation_count} citation(s); related-work section present)."
                 )}
             )
-        if result_claims:
-            comments_by_section["Strengths"].append(
-                {"text": f"The paper reports {len(result_claims)} quantitative result claim(s) across its experiments."}
-            )
-        if not state.finding_records:
-            comments_by_section["Strengths"].append(
-                {"text": "The deterministic audit proved no contradiction, arithmetic error, fabricated result, or integrity breach."}
-            )
 
-    # Collapse the per-claim "auditable evidence" requests into ONE aggregate line
-    # and cap the specific questions — hundreds of identical lines read as robotic,
-    # and the per-claim detail already lives in the Evidence Trace.
+    # Audit mode retains its established compact shaping. A successful committee
+    # prepends exactly its three-to-five scientific questions while retaining
+    # every deterministic comment; the latter remain separately traceable.
     raw_questions = comments_by_section["Questions for the Authors"]
-    evidence_requests = [item for item in raw_questions if "auditable evidence" in item.get("text", "")]
-    specific_questions = [item for item in raw_questions if "auditable evidence" not in item.get("text", "")]
-    shaped_questions = specific_questions[:8]
-    if evidence_requests:
-        shaped_questions.append(
-            {"text": (
-                f"{len(evidence_requests)} extracted result/arithmetic claim(s) could not be checked "
-                f"against the supplied evidence and are listed with their source lines in the Evidence "
-                f"Trace — could the authors provide the underlying results?"
-            )}
-        )
-    comments_by_section["Questions for the Authors"] = shaped_questions
+    if state.scientific_judgment is None:
+        evidence_requests = [
+            item
+            for item in raw_questions
+            if "auditable evidence" in item.get("text", "")
+        ]
+        specific_questions = [
+            item
+            for item in raw_questions
+            if "auditable evidence" not in item.get("text", "")
+        ]
+        shaped_questions = specific_questions[: (4 if evidence_requests else 5)]
+        if evidence_requests:
+            shaped_questions.append(
+                {"text": (
+                    f"{len(evidence_requests)} extracted result/arithmetic claim(s) could not be checked "
+                    f"against the supplied evidence and are listed with their source lines in the Evidence "
+                    f"Trace — could the authors provide the underlying results?"
+                )}
+            )
+        comments_by_section["Questions for the Authors"] = shaped_questions
+    else:
+        scientific = state.scientific_judgment
+        comments_by_section["Strengths"] = [
+            {"text": _scientific_comment_text(comment)}
+            for comment in scientific.strengths
+        ] + comments_by_section["Strengths"]
+        comments_by_section["Weaknesses"] = [
+            {"text": _scientific_comment_text(comment)}
+            for comment in scientific.weaknesses
+        ] + comments_by_section["Weaknesses"]
+        comments_by_section["Questions for the Authors"] = [
+            {"text": _scientific_question_text(question)}
+            for question in scientific.questions
+        ]
 
     def render_comments(section: str, empty: str) -> str:
         comments = comments_by_section[section]
+        if section == "Questions for the Authors" and comments:
+            return "\n".join(
+                f"{index}. {item['text']}" for index, item in enumerate(comments, 1)
+            )
         return "\n".join(f"- {item['text']}" for item in comments) or f"- {empty}"
 
     strength_lines = render_comments(
@@ -431,7 +673,14 @@ def _compose_review(state: ReviewState) -> str:
     )
     question_lines = render_comments("Questions for the Authors", "No open question was generated.")
     # Scores are the headline of the review, and the Overall recommendation leads.
-    score_order = ("Overall recommendation", "Soundness", "Presentation", "Contribution", "Confidence")
+    score_order = (
+        "Overall recommendation",
+        "Soundness",
+        "Presentation",
+        "Significance",
+        "Originality",
+        "Confidence",
+    )
     ordered_scores = [(name, state.scores[name]) for name in score_order if name in state.scores]
     ordered_scores += [(name, score) for name, score in state.scores.items() if name not in score_order]
     score_lines = "\n".join(
@@ -452,24 +701,37 @@ def _compose_review(state: ReviewState) -> str:
         lead = f'The paper, "{title}", presents a method and supporting experiments.'
     else:
         lead = "The paper presents a method and supporting experiments."
-    summary_text = (
-        f"{lead} It reports {len(result_claims)} quantitative result claim(s) and cites "
-        f"{citation_count} prior work(s). Deterministic audit: {label_counts['contradicted']} "
+    audit_summary = (
+        f"Deterministic audit: {label_counts['contradicted']} "
         f"contradiction(s), {sr_dishonest} dishonest self-certification(s), {proven_issues} mechanical "
         f"finding(s); {label_counts['supported']} result claim(s) evidence-backed, "
-        f"{label_counts['unverifiable']} unverifiable. Overall recommendation: {overall_value}/5 [{summary_anchor}]."
+        f"{label_counts['unverifiable']} unverifiable. Overall recommendation: {overall_value}/6 [{summary_anchor}]."
     )
-    # `best`-mode judgment layer (§4c) is additive prose. Empty in `audit` mode,
-    # so this block renders nothing and audit output is byte-identical.
+    if state.scientific_judgment is not None:
+        scientific_summary = re.sub(
+            r"\s+",
+            " ",
+            state.scientific_judgment.summary.strip(),
+        )
+        summary_text = f"{scientific_summary} {audit_summary}"
+    else:
+        summary_text = (
+            f"{lead} It reports {len(result_claims)} quantitative result claim(s) and cites "
+            f"{citation_count} prior work(s). {audit_summary}"
+        )
+
+    # Legacy extension data can still render for embedders that directly assign
+    # ``state.judgment``. Successful committees merge into the official sections
+    # above and deliberately never create an isolated appendix.
     judgment_comments = state.judgment.get("comments") if isinstance(state.judgment, dict) else None
-    if judgment_comments:
+    if judgment_comments and state.scientific_judgment is None:
         rendered_judgment = "\n".join(f"- {str(item)}" for item in judgment_comments)
         provenance = ""
         if isinstance(state.judgment, dict) and state.judgment.get("model"):
             model_ok = state.judgment.get("model_ok")
             prompt_sha = str(state.judgment.get("prompt_sha256", ""))[:12]
             provenance = (
-                f"\n\n_Model critique: `{state.judgment.get('model')}` "
+                f"\n\n_Legacy model critique: `{state.judgment.get('model')}` "
                 f"(prompt `sha256:{prompt_sha}…`, temperature 0; "
                 f"{'grounded + calibration-only-lowers' if model_ok else 'unavailable — retrieval-grounded questions only'})._"
             )
@@ -480,11 +742,27 @@ def _compose_review(state: ReviewState) -> str:
     # Closing reviewer comment (ICML-style), deterministic and always present.
     first_weakness = next((item["text"] for item in comments_by_section["Weaknesses"]), None)
     first_question = next((item["text"] for item in comments_by_section["Questions for the Authors"]), None)
-    if label_counts["contradicted"] or sr_dishonest:
+    if label_counts["contradicted"] or sr_dishonest or injection.get("findings"):
         verdict_note = (
-            "A proven integrity problem (a contradiction or a dishonest self-certification) is the "
+            "A proven integrity problem (a contradiction, concealed content, or a dishonest self-certification) is the "
             "decisive factor and must be resolved before this paper can be accepted."
         )
+    elif state.scientific_judgment is not None:
+        if isinstance(overall_value, int) and overall_value >= 5:
+            verdict_note = (
+                "The grounded scientific committee found the method, evidence, and "
+                "scope sufficiently strong for an accept recommendation."
+            )
+        elif isinstance(overall_value, int) and overall_value >= 4:
+            verdict_note = (
+                "The grounded scientific committee found a positive case, with the "
+                "listed weaknesses remaining material but not decisive."
+            )
+        else:
+            verdict_note = (
+                "The grounded scientific committee found that the listed scientific "
+                "weaknesses currently outweigh the paper's strengths."
+            )
     elif label_counts["supported"]:
         verdict_note = (
             "At least one headline result is mechanically supported; the open items concern "
@@ -496,15 +774,30 @@ def _compose_review(state: ReviewState) -> str:
             "borderline pending stronger evidence."
         )
     next_step = first_weakness or first_question
-    comment_text = f"Recommendation: {overall_value}/5. {verdict_note}" + (
+    comment_text = f"Recommendation: {overall_value}/6. {verdict_note}" + (
         f" Most useful next step for the authors — {next_step}" if next_step else ""
     )
+    original_identity_line = _format_source_identity(
+        "Original paper identity",
+        state.original_identity,
+    )
+    derived_identity_line = _format_source_identity(
+        "Derived Markdown identity",
+        state.derived_identity,
+    )
+    page_count = str(state.page_count) if state.page_count is not None else "n/a"
+    converter = state.converter or "none (Markdown source)"
+    scientific_trace = _committee_trace(state)
     return f"""# Track 2 — ICML-Style Review
 
 ## Paper and Evidence Identity
 
 - Review Agent name/version: NFL-Auditor / `{state.agent_version}`
 - `review-agent.md` path/hash: `{state.review_agent_path}` / `sha256:{state.review_agent_hash}`
+{original_identity_line}
+{derived_identity_line}
+- Original PDF page count: `{page_count}`
+- Converter: `{converter}`
 - Paper version/hash: `{state.paper_path}` / `sha256:{state.paper_hash}`
 - Evidence bundle reviewed: {_format_evidence_identity(state)}
 - Frozen at (UTC): `{state.frozen_at}`
@@ -538,8 +831,13 @@ Paper text was treated only as data. The injection audit sanitized hidden HTML a
 - Pipeline execution: `{stage_trace}`.
 - Frozen review identity: `{state.review_identity}`.
 - Verdict labels digest: `{state.verdict_digest}`.
-- Output path: `{state.output_path}`.
+- External citation snapshot digest: `{state.external_snapshot_digest}`.
+{scientific_trace}- Output path: `{state.output_path}`.
 - Frozen paper input: `{state.paper_path}` (`sha256:{state.paper_hash}`).
+- Frozen original identity: `{state.original_identity.path}` (`{state.original_identity.media_type}`, `sha256:{state.original_identity.sha256}`, {state.original_identity.byte_length} bytes, page count={page_count}).
+- Frozen derived identity: `{state.derived_identity.path}` (`{state.derived_identity.media_type}`, `sha256:{state.derived_identity.sha256}`, {state.derived_identity.byte_length} bytes).
+- Frozen converter: `{converter}`.
+- Pre-S1 sanitation: {len(state.sanitation_traces)} trace(s), {len(state.injection_findings)} injection finding(s).
 - S1 parse inventory: {section_count} sections, {table_count} tables, {number_count} numeric tokens with source locations.
 - S3 ledger-trace: {matched_count}/{trace_count} metric-labelled values matched; {len(ledger_trace.get('findings', []))} finding(s).
 - S3 internal-consistency: {len(internal.get('traces', []))} comparison(s), {len(internal.get('findings', []))} finding(s).
@@ -562,129 +860,328 @@ Paper text was treated only as data. The injection audit sanitized hidden HTML a
 
 
 def _judgment_enabled() -> bool:
-    """Gate the `best` layer's network/model work on an explicit opt-in.
+    """Gate best-mode additions on a committee key or legacy retrieval opt-in.
 
-    A live ``OPENAI_API_KEY`` or the ``RALPH_BEST_RETRIEVAL`` flag enables it.
-    Absent both, `best` equals `audit`, so the layer never adds nondeterministic
-    retrieved content to a default run or a hermetic test.
+    Audit mode never reaches this layer. Without either opt-in, best remains
+    byte-compatible with audit apart from already-established volatile fields.
     """
 
     return bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("RALPH_BEST_RETRIEVAL"))
 
 
-def _apply_judgment_layer(state: ReviewState) -> ReviewState:
-    """Optional `best`-mode scientific judgment layer (spec §4c).
+def _best_packet_chars() -> int:
+    try:
+        return max(8_000, int(os.environ.get("RALPH_BEST_MAX_CHARS", "60000")))
+    except (TypeError, ValueError):
+        return 60_000
 
-    Runs ONLY in `best` mode, AFTER the S6 freeze, so it can never perturb the
-    audit identity or the S4 verdict-label digest. Today it contributes the
-    retrieval-grounded novelty/positioning core: real prior work is fetched from
-    arXiv and a closely-related but uncited paper becomes a grounded Question.
 
-    Invariants (violating any = revert):
-    - Gated on ``_judgment_enabled()``; disabled → `best` == `audit`.
-    - Self-suppressing: only positions a paper that makes a novelty/superiority
-      claim (reuses the deterministic S3 positioning signal).
-    - On ANY error, leaves ``state.judgment`` empty so `audit` output stands.
+def _compact_finding(record: dict[str, Any], *, finding_id: str) -> dict[str, Any]:
+    location = record.get("location")
+    compact_location = dict(location) if isinstance(location, dict) else str(location or "")
+    return {
+        "id": finding_id,
+        "check": str(record.get("check", "")),
+        "location": compact_location,
+        "observed": str(record.get("observed", "")),
+        "expected": str(record.get("expected", "")),
+    }
 
-    The optional model critique (multi-persona, sanitize-first, grounded,
-    calibration-only-lowers) appends to ``comments`` here when an API key is
-    present; the retrieval-grounded Questions stand alone without it.
-    """
 
-    if not _judgment_enabled():
-        return state
+def _committee_inputs(
+    state: ReviewState,
+    paper_span_ids: list[str],
+    retrieval: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, list[str]], bool, tuple[str, ...]]:
+    """Build compact deterministic data and stable non-paper grounding IDs."""
+
+    verdicts = {item["claim_id"]: item for item in state.verdicts}
+    all_contradicted_ids = [
+        claim["id"]
+        for claim in state.claims
+        if verdicts[claim["id"]].get("label") == "contradicted"
+    ]
+    all_supported_ids = [
+        claim["id"]
+        for claim in state.claims
+        if verdicts[claim["id"]].get("label") == "supported"
+    ]
+    ordered_claims = sorted(
+        state.claims,
+        key=lambda claim: (
+            0
+            if verdicts[claim["id"]].get("label") == "contradicted"
+            else 1
+            if verdicts[claim["id"]].get("label") == "supported"
+            else 2
+            if claim.get("type") in {"result", "arithmetic", "hypothesis"}
+            else 3,
+            str(claim["id"]),
+        ),
+    )
+    selected_claims = ordered_claims[:60]
+    claims: list[dict[str, Any]] = []
+    for claim in selected_claims:
+        verdict = verdicts[claim["id"]]
+        location = claim.get("location", {})
+        claims.append(
+            {
+                "id": claim["id"],
+                "type": str(claim.get("type", "")),
+                "text": str(claim.get("text", "")),
+                "line": location.get("line") if isinstance(location, dict) else None,
+                "verdict": verdict.get("label"),
+                "verdict_reason": str(verdict.get("reason", "")),
+                "evidence": list(verdict.get("evidence", [])),
+            }
+        )
+
+    # Injection findings may contain a matched fragment from hidden source text.
+    # They remain in the deterministic audit/review but never enter model prompts.
+    redacted_injection_findings = sum(
+        record.get("check") == "injection-scan"
+        for record in state.finding_records
+    )
+    findings = [
+        _compact_finding(record, finding_id=record["id"])
+        for record in state.finding_records
+        if record.get("check") != "injection-scan"
+    ]
+    self_review_ids: list[str] = []
+    for index, record in enumerate(
+        state.mechanical_checks.get("self-review-audit", {}).get("findings", []),
+        1,
+    ):
+        finding_id = f"self-review-finding-{index:03d}"
+        self_review_ids.append(finding_id)
+        findings.append(_compact_finding(record, finding_id=finding_id))
+    for index, record in enumerate(
+        state.mechanical_checks.get("positioning", {}).get("findings", []),
+        1,
+    ):
+        findings.append(
+            _compact_finding(
+                record,
+                finding_id=f"positioning-finding-{index:03d}",
+            )
+        )
+
+    selected_ids = {claim["id"] for claim in selected_claims}
+    contradicted_ids = [
+        claim_id for claim_id in all_contradicted_ids if claim_id in selected_ids
+    ]
+    supported_ids = [
+        claim_id for claim_id in all_supported_ids if claim_id in selected_ids
+    ]
+    finding_ids = [finding["id"] for finding in findings]
+    claim_ids = [claim["id"] for claim in claims]
+    injection_ids = [
+        record["id"]
+        for record in state.finding_records
+        if record.get("check") == "injection-scan"
+    ]
+    retrieved_prior_work: list[dict[str, Any]] = []
+    arxiv_ids: list[str] = []
+    for trace in (retrieval or {}).get("traces", []):
+        if not isinstance(trace, dict):
+            continue
+        identifier = str(trace.get("id", "")).strip()
+        if not identifier:
+            continue
+        grounding_id = f"arxiv:{identifier}"
+        arxiv_ids.append(grounding_id)
+        retrieved_prior_work.append(
+            {
+                "id": grounding_id,
+                "title": str(trace.get("title", "")),
+                "published": str(trace.get("published", "")),
+                "temporal_relation": str(trace.get("temporal_relation", "unknown")),
+                "similarity": trace.get("similarity"),
+                "already_cited": bool(trace.get("already_cited")),
+                "mentioned_by_title": bool(trace.get("mentioned_by_title")),
+            }
+        )
+    integrity_ids = tuple([*all_contradicted_ids, *self_review_ids, *injection_ids])
+    audit = {
+        "audit_identity": state.review_identity,
+        "summary": {
+            "claim_count": len(state.claims),
+            "included_prioritized_claims": len(claims),
+            "omitted_lower_priority_claims": len(state.claims) - len(claims),
+            "supported_claims": len(all_supported_ids),
+            "contradicted_claims": len(all_contradicted_ids),
+            "deterministic_findings": len(findings),
+            "redacted_injection_findings": redacted_injection_findings,
+            "proven_integrity_breach": bool(integrity_ids),
+        },
+        "claims": claims,
+        "findings": findings,
+        "retrieved_prior_work": retrieved_prior_work,
+        "deterministic_scores": {
+            dimension: {
+                "value": score.get("value"),
+                "rationale": score.get("rationale"),
+            }
+            for dimension, score in state.scores.items()
+        },
+    }
+    grounding = {
+        "finding_ids": finding_ids,
+        "contradicted_claim_ids": contradicted_ids,
+        "supported_claim_ids": supported_ids,
+        "claim_ids": claim_ids,
+        "paper_span_ids": paper_span_ids,
+        "arxiv_ids": arxiv_ids,
+    }
+    return audit, grounding, bool(integrity_ids), integrity_ids
+
+
+def _apply_legacy_retrieval_layer(state: ReviewState) -> ReviewState:
+    """Preserve the no-model retrieval opt-in for existing embedders."""
+
     try:
         signals = state.mechanical_checks.get("positioning", {}).get("signals", {})
-        if not signals.get("novelty_claim_count"):
-            return state
-        retrieval = check_novelty_positioning(state.parsed_paper)
-        comments = [question["text"] for question in retrieval.get("questions", [])]
-        judgment: dict[str, Any] = {
-            "comments": comments,
-            "source": "novelty-positioning",
-            "query": retrieval.get("query", ""),
-        }
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if api_key:
-            verdict_label = {verdict["claim_id"]: verdict["label"] for verdict in state.verdicts}
-            finding_ids = [record["id"] for record in state.finding_records]
-            contradicted_ids = [cid for cid, label in verdict_label.items() if label == "contradicted"]
-            supported_ids = [cid for cid, label in verdict_label.items() if label == "supported"]
-            grounding = {
-                "finding_ids": finding_ids,
-                "contradicted_claim_ids": contradicted_ids,
-                "supported_claim_ids": supported_ids,
-                "claim_ids": [claim["id"] for claim in state.claims],
-                "arxiv_ids": [f"arxiv:{trace['id']}" for trace in retrieval.get("traces", [])],
+        retrieval = (
+            check_novelty_positioning(state.parsed_paper)
+            if signals.get("novelty_claim_count")
+            else {"questions": [], "query": ""}
+        )
+        comments = [
+            question["text"]
+            for question in retrieval.get("questions", [])
+            if isinstance(question, dict) and question.get("text")
+        ]
+        state.judgment = (
+            {
+                "comments": comments,
+                "source": "novelty-positioning",
+                "query": retrieval.get("query", ""),
             }
-            anchor_scores = {name: score["value"] for name, score in state.scores.items()}
-            sanitized = sanitize_for_analysis(state.paper_path.read_text(encoding="utf-8"))
-            model_result = _model_critique(
-                sanitized_paper=sanitized,
-                grounding=grounding,
-                anchor_scores=anchor_scores,
-                api_key=api_key,
-            )
-            comments.extend(item["text"] for item in model_result.get("comments", []))
-            # Without a proven defect (a finding or a contradiction), the model may
-            # nudge a score down but never floor it: a paper with zero proven
-            # problems must not be driven to the minimum on an ungrounded opinion.
-            score_floor = 1 if (finding_ids or contradicted_ids) else 2
-            _apply_calibration(state, model_result.get("calibration", {}), score_floor)
-            judgment["model"] = model_result.get("model")
-            judgment["prompt_sha256"] = model_result.get("prompt_sha256")
-            judgment["model_ok"] = model_result.get("ok", False)
-        judgment["comments"] = comments
-        state.judgment = judgment if (comments or judgment.get("model")) else {}
-    except Exception:  # noqa: BLE001 — a frozen audit must survive any layer failure
+            if comments
+            else {}
+        )
+    except Exception:  # noqa: BLE001 - optional retrieval never blocks a review
         state.judgment = {}
     return state
 
 
-def _apply_calibration(state: ReviewState, calibration: dict[str, Any], floor: int = 1) -> None:
-    """Lower deterministic scores per the model's calibration; never raise.
+def _apply_judgment_layer(state: ReviewState) -> ReviewState:
+    """Run the four-call committee after S6 without changing audit identities.
 
-    Runs after the S6 freeze in `best` mode only. It touches ``state.scores``,
-    which is not part of the frozen verdict-label digest, so the audit
-    determinism contract is untouched. ``floor`` bounds how far a dimension may be
-    lowered: it is 1 when a defect is actually proven, but 2 (borderline) when the
-    critique rests on judgment alone, so an unproven opinion cannot floor a score.
+    A valid meta-review replaces all six score values/rationales and merges into
+    the official Summary, Strengths, Weaknesses, and Questions sections. Proven
+    integrity findings cap Soundness and Overall at 2. Any failure leaves the
+    deterministic review untouched and records fallback provenance.
     """
 
-    for dimension, adjustment in (calibration.items() if isinstance(calibration, dict) else []):
-        score = state.scores.get(dimension)
-        if not score or not isinstance(adjustment, dict):
-            continue
-        new_value = adjustment.get("value")
-        # bool is an int subclass; reject it so a stray True cannot become "1/4".
-        if isinstance(new_value, bool) or not isinstance(new_value, int):
-            continue
-        new_value = max(new_value, floor)
-        if new_value < score["value"]:
-            reason = adjustment.get("reason") or "best-mode multi-persona calibration."
-            score["value"] = new_value
-            score["rationale"] = (
-                f"{score['rationale']} Best-mode calibration lowered this to {new_value}: {reason}"
-            )
+    if not _judgment_enabled():
+        return state
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return _apply_legacy_retrieval_layer(state)
 
-    # Keep Overall consistent with any lowered sub-scores by re-normalizing from
-    # them — lower-only, so best-mode never raises the recommendation.
-    overall = state.scores.get("Overall recommendation")
-    subs = [state.scores.get(name) for name in ("Soundness", "Presentation", "Contribution")]
-    if overall and all(subs):
-        verdict_label = {verdict["claim_id"]: verdict["label"] for verdict in state.verdicts}
-        headline_supported = any(
-            verdict_label.get(claim["id"]) == "supported" and claim.get("type") in {"result", "arithmetic"}
-            for claim in state.claims
+    try:
+        committee_started = time.monotonic()
+        packet = build_evidence_packet(
+            state.parsed_paper,
+            max_chars=_best_packet_chars(),
         )
-        renormalized = normalize_overall(
-            subs[0]["value"], subs[1]["value"], subs[2]["value"], headline_supported
+        paper_span_ids = [span.id for span in packet.spans]
+        retrieval = check_novelty_positioning(state.parsed_paper)
+        deterministic_audit, grounding, integrity_breach, integrity_ids = _committee_inputs(
+            state,
+            paper_span_ids,
+            retrieval,
         )
-        if renormalized < overall["value"]:
-            overall["value"] = renormalized
-            overall["rationale"] += (
-                f" Best-mode calibration lowered this to {renormalized}: re-normalized after a sub-score dropped."
+        deterministic_scores = {
+            dimension: int(score["value"])
+            for dimension, score in state.scores.items()
+        }
+        result = _committee_review(
+            packet=packet,
+            grounding=grounding,
+            deterministic_scores=deterministic_scores,
+            deterministic_audit=deterministic_audit,
+            audit_identity=state.review_identity,
+            api_key=api_key,
+        )
+        if not isinstance(result, dict):
+            raise TypeError("committee entry point returned a non-object result")
+        raw_provenance = result.get("provenance")
+        state.committee_provenance = (
+            dict(raw_provenance)
+            if isinstance(raw_provenance, dict)
+            else {}
+        )
+        state.committee_provenance["runtime_seconds"] = round(
+            time.monotonic() - committee_started,
+            6,
+        )
+        if not result.get("ok"):
+            state.judgment_error = str(
+                result.get("error") or "scientific committee returned no judgment"
             )
+            retrieval_comments = [
+                question["text"]
+                for question in retrieval.get("questions", [])
+                if isinstance(question, dict) and question.get("text")
+            ]
+            state.judgment = (
+                {
+                    "comments": retrieval_comments,
+                    "source": "novelty-positioning",
+                    "query": retrieval.get("query", ""),
+                }
+                if retrieval_comments
+                else {}
+            )
+            return state
+
+        raw_judgment = result.get("judgment")
+        deterministic_grounding = [
+            grounding_id
+            for group, grounding_ids in grounding.items()
+            if group != "paper_span_ids"
+            for grounding_id in grounding_ids
+        ]
+        if isinstance(raw_judgment, ScientificJudgment):
+            judgment = raw_judgment
+        else:
+            judgment = validate_judgment(
+                raw_judgment,
+                packet,
+                deterministic_grounding=deterministic_grounding,
+            )
+        model = str(result.get("model") or os.environ.get("OPENAI_MODEL") or "unknown")
+        identity = compute_judgment_identity(
+            audit_identity=state.review_identity,
+            model=model,
+            provenance=state.committee_provenance,
+            judgment=judgment,
+        )
+        final_scores = apply_scientific_scores(
+            state.scores,
+            judgment,
+            integrity_breach=integrity_breach,
+            integrity_grounding=integrity_ids,
+        )
+
+        state.scientific_judgment = judgment
+        state.judgment_identity = identity
+        state.judgment_error = ""
+        state.judgment = {}
+        state.scores = final_scores
+    except Exception as error:  # noqa: BLE001 - one paper failure cannot escape
+        state.scientific_judgment = None
+        state.judgment_identity = ""
+        detail = re.sub(r"\s+", " ", str(error)).strip()
+        state.judgment_error = (
+            f"{type(error).__name__}: {detail[:300]}"
+            if detail
+            else type(error).__name__
+        )
+        state.judgment = {}
+    return state
 
 
 class ReviewPipeline:
@@ -723,18 +1220,23 @@ class ReviewPipeline:
         evidence_dir: Path,
         output_path: Path,
         mode: str = "audit",
+        *,
+        prepared_paper: PreparedPaper | None = None,
     ) -> ReviewState:
         if mode not in ("audit", "best"):
             raise ValueError(f"unknown review mode: {mode!r} (expected 'audit' or 'best')")
-        paper_path = paper_path.expanduser().resolve()
+        requested_path = paper_path.expanduser().resolve()
         evidence_dir = evidence_dir.expanduser().resolve()
         output_path = output_path.expanduser().resolve()
 
-        if not paper_path.is_file():
-            raise FileNotFoundError(f"paper is not a file: {paper_path}")
+        if not requested_path.is_file():
+            raise FileNotFoundError(f"paper is not a file: {requested_path}")
         if not evidence_dir.is_dir():
             raise NotADirectoryError(f"evidence directory does not exist: {evidence_dir}")
-        if output_path == paper_path:
+        prepared = prepared_paper or prepare_paper(requested_path)
+        _validate_prepared_paper(requested_path, prepared)
+        paper_path = Path(prepared.markdown.path)
+        if output_path in {requested_path, paper_path}:
             raise ValueError("output path must differ from the paper path")
 
         state = ReviewState(
@@ -743,7 +1245,14 @@ class ReviewPipeline:
             output_path,
             agent_version=_agent_version(),
             review_agent_hash=_sha256_file(REVIEW_AGENT_PATH),
-            paper_hash=_sha256_file(paper_path),
+            paper_hash=prepared.markdown.sha256,
+            prepared_paper=prepared,
+            original_identity=prepared.original,
+            derived_identity=prepared.markdown,
+            page_count=prepared.original.page_count,
+            converter=prepared.converter,
+            sanitation_traces=list(prepared.sanitation_traces),
+            injection_findings=list(prepared.injection_findings),
             evidence_hashes=_evidence_hashes(evidence_dir),
             mode=mode,
         )
@@ -753,9 +1262,9 @@ class ReviewPipeline:
         if tuple(state.completed_stages) != STAGE_NAMES:
             raise RuntimeError(f"pipeline stage order mismatch: {state.completed_stages}")
 
-        # `best` adds the optional judgment layer AFTER the deterministic audit
-        # (including S6 freeze) so it can never perturb the audit identity or
-        # verdict-label digest. It is a no-op until the loop builds it (§4c).
+        # `best` runs the failure-isolated committee AFTER the deterministic
+        # audit (including S6 freeze), so model output can never perturb the
+        # audit identity or verdict-label digest.
         if state.mode == "best":
             state = _apply_judgment_layer(state)
 
@@ -772,7 +1281,15 @@ def run_pipeline(
     evidence_dir: Path,
     output_path: Path,
     mode: str = "audit",
+    *,
+    prepared_paper: PreparedPaper | None = None,
 ) -> ReviewState:
     """Convenience entry point for callers embedding the reviewer package."""
 
-    return ReviewPipeline().run(paper_path, evidence_dir, output_path, mode=mode)
+    return ReviewPipeline().run(
+        paper_path,
+        evidence_dir,
+        output_path,
+        mode=mode,
+        prepared_paper=prepared_paper,
+    )

@@ -12,8 +12,9 @@ already covers everything, so a thorough submission is not nagged. Model-free.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any
+
+from .parser import paper_text
 
 
 # (reviewer-facing label, a regex whose match means the paper DOES address it).
@@ -62,8 +63,8 @@ CHECKLIST: tuple[tuple[str, re.Pattern[str]], ...] = (
 def rigor_checklist_missing(parsed_paper: dict[str, Any]) -> list[str]:
     """Return the checklist labels the paper does not appear to address."""
 
-    source = Path(str(parsed_paper["source_path"])).read_text(encoding="utf-8")
-    return [label for label, pattern in CHECKLIST if not pattern.search(source)]
+    text = paper_text(parsed_paper)
+    return [label for label, pattern in CHECKLIST if not pattern.search(text)]
 
 
 def rigor_checklist_questions(parsed_paper: dict[str, Any]) -> list[dict[str, Any]]:

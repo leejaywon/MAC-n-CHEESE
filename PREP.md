@@ -26,7 +26,7 @@
 
 **Track 1:** ① agent workflow(감사 추적 포함) ② **2–4페이지 워크숍 스타일 short paper** ③ self-review
 **Track 2:** ① `review-agent.md` (에이전트 정의, 버전/입력 해시 프리즈) ② ICML 스타일 구조화 리뷰 결과
-리뷰 필수 섹션: Summary / Strengths / Weaknesses / Questions / Scores(Soundness·Presentation·Contribution·Overall·Confidence, **점수당 evidence 근거 1개**) / Ethics·Limitations / **Evidence Trace**
+리뷰 필수 섹션: Summary / Strengths / Weaknesses / Questions / Scores(Soundness·Presentation·Significance·Originality 각 1–4, Overall 1–6, Confidence 1–5, **점수당 evidence 근거 1개**) / Ethics·Limitations / **Evidence Trace**
 템플릿: 공식 레포 `skills/auto-research/assets/`에 전부 있음 — 그대로 복사해서 채우는 구조.
 
 ## Track 1 경로 3개 (공식이 정의함)

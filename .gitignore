@@ -4,6 +4,8 @@ wandb/
 __pycache__/
 *.py[cod]
 .DS_Store
+.venv
+.venv/
 
 # Secrets — never commit real keys
 .env
@@ -12,3 +14,10 @@ __pycache__/
 
 # Ralph loop logs (dev artifacts)
 logs/
+
+# Live-submission run artifacts (downloaded papers, generated reviews, run report)
+submit_work/
+
+# Fresh random-PDF smoke downloads, manifests, and generated reviews
+eval/random_pdf_runs/
+.reviewer_sources/

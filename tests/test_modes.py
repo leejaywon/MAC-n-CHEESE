@@ -1,4 +1,4 @@
-"""Tests for run modes: audit (default, deterministic) and best (judgment hook)."""
+"""Tests for the review layers: the committee runs by default; --deterministic is audit-only."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ EVIDENCE = ROOT / "eval/evidence/clean_val_bpb"
 # Lines that legitimately differ between two runs / two output files: the UTC
 # freeze stamp (per run) and the recorded output path (per file). Everything else
 # is a pure function of the frozen inputs and the reviewer source.
-VOLATILE_RE = re.compile(r"^- (?:Frozen at \(UTC\)|Output path):.*$", re.M)
+VOLATILE_RE = re.compile(r"^- (?:Frozen at \(UTC\)|Output path|Review method):.*$", re.M)
 
 
 def _review(mode: str, out_dir: str) -> str:
@@ -36,24 +36,28 @@ def _review(mode: str, out_dir: str) -> str:
 
 
 class ModeTests(unittest.TestCase):
-    def test_audit_is_default(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+    def test_full_review_is_default(self) -> None:
+        with _DISABLE_JUDGMENT, tempfile.TemporaryDirectory() as directory:
             state = run_pipeline(PAPER, EVIDENCE, Path(directory) / "d.md")
-        self.assertEqual(state.mode, "audit")
+        self.assertEqual(state.mode, "best")
 
     def test_unknown_mode_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
                 run_pipeline(PAPER, EVIDENCE, Path(directory) / "x.md", mode="turbo")
 
-    def test_best_equals_audit_when_judgment_disabled(self) -> None:
-        # With the judgment layer's opt-in unset, best output must equal audit
-        # output except for the per-run UTC freeze timestamp.
+    def test_deterministic_content_matches_committeeless_default(self) -> None:
+        # With the committee unable to run, the default output must carry the same
+        # deterministic content as --deterministic — only volatile lines and the
+        # Review-method label differ. The label is asserted so a committee-less
+        # review can never masquerade as a full committee review.
         with _DISABLE_JUDGMENT, tempfile.TemporaryDirectory() as directory:
-            audit = VOLATILE_RE.sub("", _review("audit", directory))
-            best = VOLATILE_RE.sub("", _review("best", directory))
-        self.assertEqual(audit, best)
-        self.assertNotIn("## Scientific Judgment", audit)
+            audit_raw = _review("audit", directory)
+            best_raw = _review("best", directory)
+        self.assertEqual(VOLATILE_RE.sub("", audit_raw), VOLATILE_RE.sub("", best_raw))
+        self.assertNotIn("## Scientific Judgment", audit_raw)
+        self.assertIn("`--deterministic`", audit_raw)
+        self.assertIn("committee did not run", best_raw)
 
     def test_best_renders_grounded_judgment_when_layer_present(self) -> None:
         # Simulate the loop's future M13+ layer to prove the extension point and
@@ -72,7 +76,7 @@ class ModeTests(unittest.TestCase):
                 best = _review("best", directory)
         finally:
             pipeline_module._apply_judgment_layer = original
-        self.assertIn("## Scientific Judgment (best mode)", best)
+        self.assertIn("## Scientific Judgment", best)
         self.assertIn("Scope is limited to n=2", best)
 
     def test_best_mode_committee_merges_grounded_review_and_direct_scores(self) -> None:
@@ -190,7 +194,8 @@ class ModeTests(unittest.TestCase):
         self.assertIn("The method is clear, but the empirical scope is narrow.", markdown)
         self.assertIn("The evaluation is limited to one reported setting.", markdown)
         self.assertIn("Scientific committee configuration", markdown)
-        self.assertNotIn("## Scientific Judgment (best mode)", markdown)
+        self.assertIn("audit + scientific committee", markdown)
+        self.assertNotIn("## Scientific Judgment", markdown)
         self.assertEqual(state.scores["Overall recommendation"]["value"], 2)
         self.assertEqual(state.scores["Soundness"]["value"], 2)
         self.assertEqual(len(state.scientific_judgment.questions), 3)

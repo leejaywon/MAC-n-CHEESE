@@ -43,11 +43,12 @@ run_review.py <paper.md|pdf> [evidence_dir] --out review.md
                   identical rerun on same hash must yield same verdict labels
 ```
 
-Modes (`run_review.py --mode`): `audit` (DEFAULT) = the full deterministic S1–S6
-pipeline, fully reproducible and injection-proof — this is the fallback contract.
-`best` = `audit` plus the scientific committee (§4c), the richer mode when a model
-key is configured. If the committee is unavailable or invalid, that paper falls
-back to its complete `audit` review.
+By default the reviewer runs the full pipeline: the deterministic S1–S6 audit plus
+the scientific committee (§4c). The committee runs only after S6 freeze, so it can
+never perturb the reproducible audit identity; if it is unavailable or invalid,
+that paper falls back to its complete deterministic audit. Pass `run_review.py
+--deterministic` for the pure S1–S6 audit — fully reproducible, offline, and free.
+The committee needs an OpenAI-compatible key.
 
 ## 4. Mechanical check battery (S3) — the moat
 
@@ -92,10 +93,10 @@ judgment-heavy critiques (a NAMED causal confound, real positioning against the
 specific literature, novelty/significance) require reasoning and live in §4c, off
 by default.
 
-## 4c. Scientific committee — `--best` only
+## 4c. Scientific committee (default; skip with `--deterministic`)
 
-Default `audit` mode is fully deterministic and is the primary fallback. `best`
-mode assesses what mechanical checks cannot: problem–method fit, claim–experiment
+The deterministic audit is always computed and is the primary fallback. On top of
+it, the committee assesses what mechanical checks cannot: problem–method fit, claim–experiment
 alignment, experimental validity, scope/generalization, design-choice and
 ablation justification, novelty, and significance.
 

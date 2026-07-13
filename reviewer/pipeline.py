@@ -91,7 +91,7 @@ class ReviewState:
     grounding_audit: dict[str, Any] = field(default_factory=dict)
     scores: dict[str, dict[str, Any]] = field(default_factory=dict)
     review_markdown: str = ""
-    mode: str = "audit"
+    mode: str = "best"
     judgment: dict[str, Any] = field(default_factory=dict)
     scientific_judgment: ScientificJudgment | None = None
     judgment_identity: str = ""
@@ -533,6 +533,36 @@ def _committee_trace(state: ReviewState) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def _review_method_line(state: ReviewState) -> str:
+    """State plainly whether the scientific committee contributed to this review.
+
+    When the committee did not run — ``--deterministic``, no API key, or a committee
+    failure — the output must not read like a full committee review. This line makes
+    the scope explicit so a reader knows every score and comment below then comes
+    only from the deterministic mechanical audit.
+    """
+
+    if state.scientific_judgment is not None:
+        return "- Review method: deterministic evidence audit + scientific committee."
+    audit_note = (
+        " Every score and comment below is from the deterministic mechanical checks; "
+        "no scientific-committee judgment is included."
+    )
+    if state.mode != "best":
+        return (
+            "- Review method: deterministic evidence audit only (`--deterministic`)."
+            + audit_note
+        )
+    if not os.environ.get("OPENAI_API_KEY"):
+        detail = "no model API key configured"
+    else:
+        detail = state.judgment_error or "committee unavailable"
+    return (
+        "- Review method: deterministic evidence audit only — the scientific committee "
+        f"did not run ({detail})." + audit_note
+    )
+
+
 def _compose_review(state: ReviewState) -> str:
     """Return the official review shape after DRAFT and authoritative GROUND."""
 
@@ -772,7 +802,7 @@ def _compose_review(state: ReviewState) -> str:
                 f"(prompt `sha256:{prompt_sha}…`, temperature 0; "
                 f"{'grounded + calibration-only-lowers' if model_ok else 'unavailable — retrieval-grounded questions only'})._"
             )
-        judgment_block = f"\n## Scientific Judgment (best mode)\n\n{rendered_judgment}{provenance}\n"
+        judgment_block = f"\n## Scientific Judgment\n\n{rendered_judgment}{provenance}\n"
     else:
         judgment_block = ""
 
@@ -830,10 +860,12 @@ def _compose_review(state: ReviewState) -> str:
     page_count = str(state.page_count) if state.page_count is not None else "n/a"
     converter = state.converter or "none (Markdown source)"
     scientific_trace = _committee_trace(state)
+    review_method = _review_method_line(state)
     return f"""# ICML-Style Paper Review
 
 ## Paper and Evidence Identity
 
+{review_method}
 - Review Agent name/version: paper-reviewer / `{state.agent_version}`
 - Review-agent spec path/hash: `{state.review_agent_path}` / `sha256:{state.review_agent_hash}`
 {original_identity_line}
@@ -1272,7 +1304,7 @@ class ReviewPipeline:
         paper_path: Path,
         evidence_dir: Path,
         output_path: Path,
-        mode: str = "audit",
+        mode: str = "best",
         *,
         prepared_paper: PreparedPaper | None = None,
     ) -> ReviewState:
@@ -1333,7 +1365,7 @@ def run_pipeline(
     paper_path: Path,
     evidence_dir: Path,
     output_path: Path,
-    mode: str = "audit",
+    mode: str = "best",
     *,
     prepared_paper: PreparedPaper | None = None,
 ) -> ReviewState:

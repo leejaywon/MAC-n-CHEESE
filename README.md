@@ -1,4 +1,6 @@
-# Paper Review Agent
+# MAC n CHEESE
+
+*Multi-Agent Committee 'n Checking & Evaluating with Scientific Evidence*
 
 An evidence-bound, ICML-style reviewer for scientific papers. Give it a paper as
 a **PDF or Markdown** file — optionally with an evidence bundle of result files —

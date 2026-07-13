@@ -1,4 +1,4 @@
-# Review Agent Spec
+# MAC n CHEESE — Review Agent Spec
 
 An evidence-bound, ICML-style reviewer for scientific papers.
 

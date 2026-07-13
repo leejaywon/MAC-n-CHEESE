@@ -76,11 +76,15 @@ def main() -> int:
         default=None,
         help="directory holding <paper-stem>/ evidence subdirs; papers without one get an empty bundle",
     )
-    parser.add_argument("--mode", choices=("audit", "best"), default="audit")
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="skip the scientific committee (offline, reproducible, no API cost)",
+    )
     parser.add_argument("--workers", type=int, default=min(8, (os.cpu_count() or 4)))
     args = parser.parse_args()
 
-    if args.mode == "best":
+    if not args.deterministic:
         _load_dotenv(ROOT / ".env")
 
     # Prefer the PDF when a converted .md sidecar sits next to it, so a paper that
@@ -101,7 +105,7 @@ def main() -> int:
         for paper in papers:
             sibling = args.evidence_root / paper.stem if args.evidence_root else None
             evidence = str(sibling) if sibling and sibling.is_dir() else empty_evidence
-            jobs.append((str(paper), evidence, str(args.out_dir / f"{paper.stem}.review.md"), args.mode))
+            jobs.append((str(paper), evidence, str(args.out_dir / f"{paper.stem}.review.md"), "audit" if args.deterministic else "best"))
 
         wall_start = time.time()
         with concurrent.futures.ProcessPoolExecutor(max_workers=args.workers) as executor:
@@ -113,8 +117,8 @@ def main() -> int:
     committee = sum(result.get("scientific_status") == "committee" for result in ok)
     fallback = sum(result.get("scientific_status") == "fallback" for result in ok)
     per_paper = [float(result["seconds"]) for result in results]
-    print(f"batch: {len(ok)}/{len(results)} reviewed [mode={args.mode}, workers={args.workers}]")
-    if args.mode == "best":
+    print(f"batch: {len(ok)}/{len(results)} reviewed [workers={args.workers}]")
+    if not args.deterministic:
         print(f"scientific: committee={committee} fallback={fallback}")
     print(f"wall={wall:.2f}s  slowest-paper={max(per_paper):.2f}s  sum-serial={sum(per_paper):.2f}s")
     for result in results:

@@ -68,7 +68,7 @@ SEARCH_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 class NoveltyPositioningTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.directory = Path(tempfile.mkdtemp(prefix="ralphthon-novelty-"))
+        self.directory = Path(tempfile.mkdtemp(prefix="review-novelty-"))
         self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
         (self.directory / "paper.md").write_text(PAPER, encoding="utf-8")
         self.parsed = parse_markdown(self.directory / "paper.md")
@@ -143,7 +143,7 @@ class NoveltyPositioningTests(unittest.TestCase):
     def test_arxiv_doi_citation_counts_as_cited(self) -> None:
         # A paper citing a work by its official arXiv DOI must not be told the work
         # "is not cited or discussed".
-        directory = Path(tempfile.mkdtemp(prefix="ralphthon-novelty-doi-"))
+        directory = Path(tempfile.mkdtemp(prefix="review-novelty-doi-"))
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
         (directory / "paper.md").write_text(
             "# Sparse Attention for Efficient Language Modeling\n\n## Abstract\n\n"
@@ -158,7 +158,7 @@ class NoveltyPositioningTests(unittest.TestCase):
         self.assertFalse(any("2004.05150" in question["text"] for question in result["questions"]))
 
     def test_post_date_work_is_not_presented_as_missing_prior_art(self) -> None:
-        directory = Path(tempfile.mkdtemp(prefix="ralphthon-novelty-cutoff-"))
+        directory = Path(tempfile.mkdtemp(prefix="review-novelty-cutoff-"))
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
         (directory / "paper.md").write_text(
             "# Sparse Attention for Language Modeling\n\n"

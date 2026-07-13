@@ -79,7 +79,7 @@ def _titles_match(expected: str, observed: str) -> bool:
 
 
 def _default_fetch(url: str) -> bytes:
-    request = Request(url, headers={"User-Agent": "ralphthon-review-agent/1.0"})
+    request = Request(url, headers={"User-Agent": "paper-review-agent/1.0"})
     with urlopen(request, timeout=8) as response:
         return response.read()
 

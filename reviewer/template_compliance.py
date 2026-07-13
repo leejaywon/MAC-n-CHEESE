@@ -1,4 +1,4 @@
-"""Deterministic checks for the Track 1 Markdown submission contract."""
+"""Deterministic checks for the event-format Markdown submission contract."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def check_template_compliance(parsed_paper: dict[str, Any], event_format: bool =
     2--4 page rule only from an explicit declaration or form-feed boundaries;
     otherwise the trace records ``unknown`` instead of inventing a layout.
 
-    This contract is THIS event's Track 1 template. On an arbitrary peer paper
+    This contract is the event-format template. On an arbitrary peer paper
     (``event_format`` False) demanding these exact sections is a false positive,
     so the check yields no findings and records that it was not applicable.
     Presentation/structure feedback on such papers is the judgment layer's job.

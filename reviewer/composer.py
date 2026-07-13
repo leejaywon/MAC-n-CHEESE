@@ -237,7 +237,7 @@ def calibrate_scores(
     self_review_dishonest: int = 0,
     positioning: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Score directly in the six-field openagentreview.org schema."""
+    """Score directly in the six-field review schema (four dimensions 1-4, Overall 1-6, Confidence 1-5)."""
 
     verdict_by_claim = {item["claim_id"]: item for item in verdicts}
     supported = [claim for claim in claims if verdict_by_claim[claim["id"]]["label"] == "supported"]
@@ -252,9 +252,6 @@ def calibrate_scores(
     template_findings = [
         finding for finding in (findings or []) if finding.get("check") == "template-compliance"
     ]
-    injection_findings = [
-        finding for finding in (findings or []) if finding.get("check") == "injection-scan"
-    ]
 
     signals = (positioning or {}).get("signals", {})
     positioned = bool(signals.get("positioned"))
@@ -265,21 +262,18 @@ def calibrate_scores(
     clean_run = not scientific_findings  # zero proven scientific findings
     has_results = any(claim.get("type") in {"result", "arithmetic"} for claim in claims)
 
-    breach_count = len(contradicted) + self_review_dishonest + len(injection_findings)
+    # Concealed reviewer-directed text is quarantined before analysis and reported
+    # in Ethics, but it is not scientific evidence about the visible manuscript.
+    # Letting it alter scores would make an injected twin score differently from
+    # the sanitized paper it actually presents to every scientific check/model.
+    breach_count = len(contradicted) + self_review_dishonest
     integrity_breach = breach_count > 0
-    integrity_anchor = (
-        contradicted_anchor
-        if contradicted
-        else str(injection_findings[0].get("id", anchor))
-        if injection_findings
-        else anchor
-    )
+    integrity_anchor = contradicted_anchor if contradicted else anchor
     if integrity_breach:
         soundness = 1
         soundness_reason = (
             f"A proven integrity breach ({len(contradicted)} contradiction(s), "
-            f"{self_review_dishonest} dishonest self-certification(s), "
-            f"{len(injection_findings)} concealed-instruction/content finding(s)) "
+            f"{self_review_dishonest} dishonest self-certification(s)) "
             f"undermines soundness [{integrity_anchor}]."
         )
     elif len(headline_supported) >= 2 and clean_run:

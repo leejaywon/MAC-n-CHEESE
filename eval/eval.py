@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Evaluate mechanical flaw detection without modifying frozen answer data.
 
-Stdout is deliberately one floating-point score for Ralph-loop consumption.
-Diagnostics and W&B SDK output go to stderr.  A finding identifies a flaw only
+Stdout is deliberately one floating-point score for scripted consumption.
+Diagnostics go to stderr.  A finding identifies a flaw only
 when both its check family and paper line match the claim-anchored answer key.
 Multiple findings at one injected passage count as one detection, not extra
 false positives, because checks can independently prove the same corruption.
@@ -11,7 +11,6 @@ false positives, because checks can independently prove the same corruption.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -86,13 +85,13 @@ def _evaluate_external() -> dict[str, float | int]:
     no_crash = 0
     completeness_values: list[float] = []
     finding_total = 0
-    with tempfile.TemporaryDirectory(prefix="ralphthon-external-") as out_dir, \
-            tempfile.TemporaryDirectory(prefix="ralphthon-external-ev-") as empty_evidence:
+    with tempfile.TemporaryDirectory(prefix="review-external-") as out_dir, \
+            tempfile.TemporaryDirectory(prefix="review-external-ev-") as empty_evidence:
         for paper in papers:
             sibling = external_dir / paper.stem
             evidence_dir = sibling if sibling.is_dir() else Path(empty_evidence)
             try:
-                state = run_pipeline(paper, evidence_dir, Path(out_dir) / paper.name)
+                state = run_pipeline(paper, evidence_dir, Path(out_dir) / paper.name, mode="audit")
             except Exception as error:  # noqa: BLE001 — a crash is the signal, not a stop
                 print(f"external: {paper.name} crashed: {error!r}", file=sys.stderr)
                 completeness_values.append(0.0)
@@ -120,11 +119,11 @@ def _evaluate() -> dict[str, float | int]:
     completeness_values: list[float] = []
     states: dict[str, Any] = {}
 
-    with tempfile.TemporaryDirectory(prefix="ralphthon-eval-") as output_dir:
+    with tempfile.TemporaryDirectory(prefix="review-eval-") as output_dir:
         for paper_name, case in sorted(papers.items()):
             paper_path = EVAL_DIR / "papers" / paper_name
             evidence_dir = EVAL_DIR / str(case["evidence_dir"])
-            state = run_pipeline(paper_path, evidence_dir, Path(output_dir) / paper_name)
+            state = run_pipeline(paper_path, evidence_dir, Path(output_dir) / paper_name, mode="audit")
             states[paper_name] = state
             findings = list(state.mechanical_findings)
             flaws = list(case.get("flaws", []))
@@ -193,44 +192,8 @@ def _evaluate() -> dict[str, float | int]:
     }
 
 
-def _log_offline(metrics: dict[str, float | int]) -> None:
-    # Force offline at the call site even if a user's shell has another W&B
-    # default. The evaluation never syncs or asks for credentials.
-    os.environ["WANDB_MODE"] = "offline"
-    os.environ.setdefault("WANDB_SILENT", "true")
-    # Keep every SDK path inside the writable workspace. Disabling machine
-    # statistics avoids a wandb-core macOS netstat parser crash under the
-    # sandbox; reviewer metrics are still persisted in the offline run.
-    wandb_root = EVAL_DIR / "wandb"
-    os.environ["WANDB_CACHE_DIR"] = str(wandb_root / "cache")
-    os.environ["WANDB_CONFIG_DIR"] = str(wandb_root / "config")
-    os.environ["WANDB_DATA_DIR"] = str(wandb_root / "data")
-    import wandb
-
-    log_dir = wandb_root / "runs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    run = wandb.init(
-        project="ralphthon-reviewer-eval",
-        job_type="reviewer-eval",
-        mode="offline",
-        dir=str(log_dir),
-        settings=wandb.Settings(
-            console="off",
-            silent=True,
-            x_disable_stats=True,
-            x_disable_machine_info=True,
-        ),
-        config={"answer_key_version": 1, "score_formula": "detection-0.5*fp+0.1*completeness"},
-    )
-    if run is None:
-        raise RuntimeError("W&B offline run did not initialize")
-    run.log(metrics)
-    run.finish()
-
-
 def main() -> int:
     metrics = _evaluate()
-    _log_offline(metrics)
     print(
         "eval details: "
         f"papers={metrics['paper_count']} flaws={metrics['expected_flaw_count']} "

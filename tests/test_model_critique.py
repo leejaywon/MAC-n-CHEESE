@@ -46,6 +46,7 @@ class ModelCritiqueTests(unittest.TestCase):
             grounding=GROUNDING,
             anchor_scores=ANCHORS,
             api_key="sk-test",
+            model="stub-model",
             client=_client(response),
         )
 
@@ -137,6 +138,7 @@ class ModelCritiqueTests(unittest.TestCase):
             grounding=GROUNDING,
             anchor_scores=ANCHORS,
             api_key="sk-test",
+            model="stub-model",
             client=bad_client,
         )
         self.assertFalse(result["ok"])
@@ -153,12 +155,13 @@ class ModelCritiqueTests(unittest.TestCase):
     def test_prompt_keeps_late_high_priority_sections_beyond_old_prefix(self) -> None:
         client = _client({"summary": "Summary", "items": [], "calibration": {}})
         paper = "# Title\n\n" + ("ordinary body text " * 900) + "\n\n## References\n\nTAIL-MARKER-REF\n"
-        with mock.patch.dict(os.environ, {"RALPH_BEST_MAX_CHARS": "8000"}, clear=False):
+        with mock.patch.dict(os.environ, {"REVIEWER_BEST_MAX_CHARS": "8000"}, clear=False):
             result = critique(
                 sanitized_paper=paper,
                 grounding=GROUNDING,
                 anchor_scores=ANCHORS,
                 api_key="sk-test",
+                model="stub-model",
                 client=client,
             )
         self.assertTrue(result["ok"])

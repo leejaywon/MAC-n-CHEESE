@@ -144,6 +144,8 @@ The relative improvement is 7.14%.
                 "ledger-trace",
                 "internal-consistency",
                 "arithmetic",
+                "cross-references",
+                "manuscript-artifacts",
                 "baseline-fairness",
                 "negative-evidence",
                 "citation-existence",

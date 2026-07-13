@@ -147,8 +147,8 @@ def _agent_version() -> str:
 def _previous_freeze(path: Path) -> tuple[str, str] | None:
     """Read the machine-checkable freeze markers from an earlier review.
 
-    Legacy M0-M6 outputs have no markers and may be replaced once. Once an M7
-    result is written, however, the output path is bound to one frozen identity.
+    An output without freeze markers may be replaced once; once a review with a
+    frozen identity is written, the output path is bound to that identity.
     """
 
     if not path.is_file():
@@ -1156,6 +1156,15 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return _apply_legacy_retrieval_layer(state)
+    # Committee enabled (key present) but no model: a config error affecting every
+    # paper identically, so fail loud rather than silently downgrade. Raised before
+    # the isolation try so it surfaces instead of collapsing to a per-paper fallback.
+    if not os.environ.get("OPENAI_MODEL"):
+        raise RuntimeError(
+            "OPENAI_MODEL is not set but the scientific committee is enabled "
+            "(OPENAI_API_KEY present). Set OPENAI_MODEL (e.g. gpt-5.6-sol) in your "
+            ".env or environment, or run with --deterministic to skip the committee."
+        )
 
     try:
         committee_started = time.monotonic()
@@ -1271,7 +1280,7 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
 
 
 class ReviewPipeline:
-    """Execute the S1-S6 walking skeleton in the specified order."""
+    """Execute the ordered S1-S6 pipeline stages."""
 
     def __init__(self) -> None:
         self._stages: tuple[Callable[[ReviewState], ReviewState], ...] = (

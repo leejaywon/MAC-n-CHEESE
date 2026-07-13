@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _parse(text: str) -> dict:
-    directory = Path(tempfile.mkdtemp(prefix="ralphthon-positioning-"))
+    directory = Path(tempfile.mkdtemp(prefix="review-positioning-"))
     unittest.addModuleCleanup(shutil.rmtree, directory, ignore_errors=True)
     (directory / "paper.md").write_text(text, encoding="utf-8")
     return parse_markdown(directory / "paper.md")

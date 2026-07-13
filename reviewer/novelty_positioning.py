@@ -60,7 +60,7 @@ DATE_RE = re.compile(r"\b(?P<date>20\d{2}-\d{2}-\d{2})\b")
 
 
 def _default_fetch(url: str) -> bytes:
-    request = Request(url, headers={"User-Agent": "ralphthon-review-agent/1.0"})
+    request = Request(url, headers={"User-Agent": "paper-review-agent/1.0"})
     with urlopen(request, timeout=8) as response:
         return response.read()
 
@@ -196,6 +196,7 @@ def check_novelty_positioning(
     max_results: int = 10,
     min_similarity: float = 0.10,
     max_questions: int = 3,
+    queries: list[str] | None = None,
 ) -> dict[str, Any]:
     """Retrieve real prior work and surface closely-related papers left uncited.
 
@@ -207,14 +208,27 @@ def check_novelty_positioning(
     fetch = fetch or _default_fetch
 
     topic_terms = _topic_terms(parsed_paper)
-    query = " OR ".join(topic_terms)
-    if not query:
-        return {"check": "novelty-positioning", "query": "", "retrieved": [], "traces": [], "questions": []}
-
-    entries = _retrieve_arxiv(query, cache_dir, fetch, max_results)
+    if queries:
+        # Reviewer-style queries (LLM-generated from the contribution) searched by
+        # relevance and merged — semantically targeted prior art, not a lexical
+        # OR of title tokens. The Jaccard filter below still ranks precision.
+        query = " ; ".join(queries)
+        entries = []
+        seen_ids: set[str] = set()
+        for one_query in queries:
+            for entry in _retrieve_arxiv(one_query, cache_dir, fetch, max_results):
+                if entry["id"] not in seen_ids:
+                    seen_ids.add(entry["id"])
+                    entries.append(entry)
+    else:
+        query = " OR ".join(topic_terms)
+        if not query:
+            return {"check": "novelty-positioning", "query": "", "retrieved": [], "traces": [], "questions": []}
+        entries = _retrieve_arxiv(query, cache_dir, fetch, max_results)
     cited_ids = _cited_arxiv_ids(parsed_paper)
     paper_tokens = set(_normalize_tokens(paper_text(parsed_paper)))
     topic_token_set = set(topic_terms) | set(_normalize_tokens(_abstract(parsed_paper)))
+    paper_title_tokens = set(_normalize_tokens(_title(parsed_paper)))
 
     declared_match = DATE_RE.search(paper_text(parsed_paper))
     declared_date = (
@@ -231,6 +245,11 @@ def check_novelty_positioning(
         # "Already discussed by title": the paper names this work even without a
         # machine-readable id, so it is engaged with — do not ask about it.
         mentioned = bool(title_tokens) and len(title_tokens & paper_tokens) / len(title_tokens) >= 0.8
+        # The submission is never its own prior art: a near-identical retrieved title
+        # is the paper itself (matters when an already-published paper is reviewed).
+        is_self = bool(paper_title_tokens and title_tokens) and (
+            len(title_tokens & paper_title_tokens) / len(title_tokens | paper_title_tokens) >= 0.8
+        )
         published_text = entry.get("published", "")
         try:
             published_date = date.fromisoformat(published_text[:10])
@@ -246,6 +265,7 @@ def check_novelty_positioning(
         trace = {
             "id": entry["id"],
             "title": entry["title"],
+            "summary": entry.get("summary", ""),
             "published": published_text,
             "retrieved_at": retrieved_at,
             "temporal_relation": temporal_relation,
@@ -254,7 +274,7 @@ def check_novelty_positioning(
             "mentioned_by_title": mentioned,
         }
         traces.append(trace)
-        if similarity >= min_similarity and not already_cited and not mentioned:
+        if similarity >= min_similarity and not already_cited and not mentioned and not is_self:
             candidates.append(trace)
 
     candidates.sort(key=lambda item: item["similarity"], reverse=True)

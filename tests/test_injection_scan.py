@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from reviewer import check_injection_scan, parse_markdown, run_pipeline, sanitize_for_analysis
+from reviewer import pipeline as pipeline_module
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +51,35 @@ class InjectionScanTests(unittest.TestCase):
         self.assertEqual(clean.scores, attack.scores)
         self.assertEqual(len(attack.mechanical_checks["injection-scan"]["findings"]), 1)
         self.assertIn("found 1 reviewer-directed instruction attempt(s)", attack.review_markdown)
+        self.assertIn(
+            "did not affect the scientific assessment",
+            attack.review_markdown,
+        )
+        self.assertNotIn("is the decisive factor", attack.review_markdown)
+        weaknesses = attack.review_markdown.split("## Weaknesses", 1)[1].split(
+            "## Questions for the Authors",
+            1,
+        )[0]
+        self.assertNotIn("injection-scan", weaknesses)
+
+    def test_attack_is_redacted_from_committee_without_triggering_score_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            attack = run_pipeline(
+                ROOT / "eval/papers/injection_hidden_html.md",
+                ROOT / "eval/evidence/injection_hidden_html",
+                Path(directory) / "attack.md",
+            )
+
+        audit, _, integrity_breach, integrity_ids = pipeline_module._committee_inputs(
+            attack,
+            [],
+            {},
+        )
+
+        self.assertEqual(audit["summary"]["redacted_injection_findings"], 1)
+        self.assertFalse(audit["summary"]["proven_integrity_breach"])
+        self.assertFalse(integrity_breach)
+        self.assertEqual(integrity_ids, ())
 
     def test_hidden_numeric_attack_does_not_change_scientific_findings_or_scores(self) -> None:
         attack = (

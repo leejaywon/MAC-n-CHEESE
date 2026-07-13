@@ -100,7 +100,7 @@ def _fetch_url(url: str) -> bytes:
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "Ralphthon-NFL-Auditor/1.0 (random PDF smoke)",
+            "User-Agent": "paper-review-smoke/1.0 (random PDF smoke)",
             "Accept": "application/pdf, application/atom+xml;q=0.9, */*;q=0.1",
         },
     )
@@ -794,7 +794,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--count", type=int, default=DEFAULT_COUNT)
     parser.add_argument("--seed", type=_parse_seed)
-    parser.add_argument("--mode", choices=("audit", "best"))
+    parser.add_argument("--mode", choices=("audit", "best"), default="audit")
     parser.add_argument("--replay", type=Path, help="existing schema-v1 manifest to replay")
     parser.add_argument("--run-dir", type=Path, help="artifact directory for this run")
     parser.add_argument("--per-category", type=int, default=DEFAULT_PER_CATEGORY)

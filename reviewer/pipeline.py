@@ -1,4 +1,4 @@
-"""Ordered six-stage Track 2 review pipeline."""
+"""Ordered six-stage scientific paper review pipeline."""
 
 from __future__ import annotations
 
@@ -23,21 +23,25 @@ from .composer import (
 )
 from .document import PreparedPaper, SourceIdentity, prepare_paper
 from .injection_scan import check_injection_scan, scan_and_sanitize
+from .manuscript_integrity import check_cross_references, check_manuscript_artifacts
 from .mechanical_checks import check_arithmetic, check_internal_consistency, check_ledger_trace
 from .model_critique import (
     committee_review as _committee_review,
     compute_judgment_identity,
+    generate_search_queries,
 )
 from .negative_evidence import check_negative_evidence
 from .novelty_positioning import check_novelty_positioning
 from .parser import parse_markdown
 from .positioning import check_positioning
+from .prose_hygiene import sanitize as _sanitize_prose
 from .review_schema import ScientificJudgment
 from .rigor_checklist import rigor_checklist_questions
 from .scientific_review import build_evidence_packet, validate_judgment
 from .scientific_scaffolding import rigor_questions
 from .self_review_audit import check_self_review_consistency
 from .template_compliance import check_template_compliance
+from .to_markdown import PDF_VISIBILITY_POLICY
 
 
 STAGE_NAMES = (
@@ -50,7 +54,7 @@ STAGE_NAMES = (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-REVIEW_AGENT_PATH = ROOT / "submission" / "review-agent.md"
+REVIEW_AGENT_PATH = ROOT / "specs" / "review-agent-spec.md"
 FREEZE_ID_RE = re.compile(r"^- Frozen review identity: `(?P<value>sha256:[0-9a-f]{64})`\.$", re.M)
 VERDICT_DIGEST_RE = re.compile(r"^- Verdict labels digest: `(?P<value>sha256:[0-9a-f]{64})`\.$", re.M)
 
@@ -90,7 +94,7 @@ class ReviewState:
     grounding_audit: dict[str, Any] = field(default_factory=dict)
     scores: dict[str, dict[str, Any]] = field(default_factory=dict)
     review_markdown: str = ""
-    mode: str = "audit"
+    mode: str = "best"
     judgment: dict[str, Any] = field(default_factory=dict)
     scientific_judgment: ScientificJudgment | None = None
     judgment_identity: str = ""
@@ -143,8 +147,8 @@ def _agent_version() -> str:
 def _previous_freeze(path: Path) -> tuple[str, str] | None:
     """Read the machine-checkable freeze markers from an earlier review.
 
-    Legacy M0-M6 outputs have no markers and may be replaced once. Once an M7
-    result is written, however, the output path is bound to one frozen identity.
+    An output without freeze markers may be replaced once; once a review with a
+    frozen identity is written, the output path is bound to that identity.
     """
 
     if not path.is_file():
@@ -177,7 +181,7 @@ def _parse_paper(state: ReviewState) -> ReviewState:
 
 
 def _detect_event_format(parsed_paper: dict[str, object], evidence_dir: Path) -> bool:
-    """Is this an event-format Track 1 submission, or an arbitrary peer paper?
+    """Is this an event-format submission with an evidence ledger, or an arbitrary peer paper?
 
     Event-specific checks (the Markdown template contract, baseline-fairness
     against a ledger) only make sense for THIS event's submission format.
@@ -215,6 +219,8 @@ def _run_mechanical_checks(state: ReviewState) -> ReviewState:
         check_ledger_trace(state.parsed_paper, state.evidence_dir, state.event_format),
         check_internal_consistency(state.parsed_paper),
         check_arithmetic(state.parsed_paper),
+        check_cross_references(state.parsed_paper),
+        check_manuscript_artifacts(state.parsed_paper),
         check_baseline_fairness(state.parsed_paper, state.evidence_dir),
         check_negative_evidence(state.parsed_paper, state.evidence_dir),
         citation_check,
@@ -299,12 +305,48 @@ def _validate_prepared_paper(requested_path: Path, prepared: PreparedPaper) -> N
         prepared.raw_text,
         original_path.name,
     )
+    trace_count = len(traces)
+    finding_count = len(findings)
+    text_traces = (
+        prepared.sanitation_traces[-trace_count:] if trace_count else ()
+    )
+    text_findings = (
+        prepared.injection_findings[-finding_count:] if finding_count else ()
+    )
+    visibility_traces = (
+        prepared.sanitation_traces[:-trace_count]
+        if trace_count
+        else prepared.sanitation_traces
+    )
+    visibility_findings = (
+        prepared.injection_findings[:-finding_count]
+        if finding_count
+        else prepared.injection_findings
+    )
     if (
         analysis_text != prepared.analysis_text
-        or traces != prepared.sanitation_traces
-        or findings != prepared.injection_findings
+        or traces != text_traces
+        or findings != text_findings
     ):
         raise ValueError("prepared sanitation records do not match the Markdown source")
+    if prepared.original.media_type == "text/markdown":
+        if visibility_traces or visibility_findings:
+            raise ValueError("Markdown preparation contains PDF visibility records")
+    elif (
+        len(visibility_traces) != len(visibility_findings)
+        or any(
+            trace.get("policy") != PDF_VISIBILITY_POLICY
+            or "page" not in trace.get("location", {})
+            for trace in visibility_traces
+        )
+        or any(
+            finding.get("check") != "injection-scan"
+            or finding.get("evidence_path") != original_path.name
+            or "page" not in finding.get("location", {})
+            for finding in visibility_findings
+        )
+    ):
+        raise ValueError("prepared PDF visibility records are malformed")
 
 
 def _freeze_inputs(state: ReviewState) -> ReviewState:
@@ -328,7 +370,7 @@ def _freeze_inputs(state: ReviewState) -> ReviewState:
     if state.evidence_hashes != _evidence_hashes(state.evidence_dir):
         raise RuntimeError("evidence bundle changed while the review pipeline was running")
     if state.review_agent_hash != _sha256_file(state.review_agent_path):
-        raise RuntimeError("review-agent.md changed while the review pipeline was running")
+        raise RuntimeError("review-agent spec changed while the review pipeline was running")
     if state.agent_version != _agent_version():
         raise RuntimeError("reviewer source changed while the review pipeline was running")
 
@@ -370,7 +412,7 @@ def _freeze_inputs(state: ReviewState) -> ReviewState:
 
 def _format_evidence_identity(state: ReviewState) -> str:
     if not state.evidence_hashes:
-        return f"`{state.evidence_dir}` (empty directory)"
+        return "none (no evidence bundle supplied)"
     entries = ", ".join(f"`{name}` (`sha256:{digest}`)" for name, digest in state.evidence_hashes)
     return f"`{state.evidence_dir}`: {entries}"
 
@@ -420,10 +462,8 @@ def _grounding_ids(value: object) -> tuple[str, ...]:
 
 
 def _scientific_comment_text(comment: object) -> str:
-    text = re.sub(
-        r"\s+",
-        " ",
-        str(getattr(comment, "text", "")).strip(),
+    text = _sanitize_prose(
+        re.sub(r"\s+", " ", str(getattr(comment, "text", "")).strip())
     )
     grounding = ", ".join(_grounding_ids(getattr(comment, "grounding", ())))
     return f"{text} [{grounding}]" if grounding else text
@@ -431,10 +471,8 @@ def _scientific_comment_text(comment: object) -> str:
 
 def _scientific_question_text(question: object) -> str:
     text = _scientific_comment_text(question)
-    assessment = re.sub(
-        r"\s+",
-        " ",
-        str(getattr(question, "assessment_if_resolved", "")).strip(),
+    assessment = _sanitize_prose(
+        re.sub(r"\s+", " ", str(getattr(question, "assessment_if_resolved", "")).strip())
     )
     return (
         f"{text} Assessment if resolved: {assessment}"
@@ -494,6 +532,36 @@ def _committee_trace(state: ReviewState) -> str:
             f"retained ({_trace_scalar(state.judgment_error)})."
         )
     return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _review_method_line(state: ReviewState) -> str:
+    """State plainly whether the scientific committee contributed to this review.
+
+    When the committee did not run — ``--deterministic``, no API key, or a committee
+    failure — the output must not read like a full committee review. This line makes
+    the scope explicit so a reader knows every score and comment below then comes
+    only from the deterministic mechanical audit.
+    """
+
+    if state.scientific_judgment is not None:
+        return "- Review method: deterministic evidence audit + scientific committee."
+    audit_note = (
+        " Every score and comment below is from the deterministic mechanical checks; "
+        "no scientific-committee judgment is included."
+    )
+    if state.mode != "best":
+        return (
+            "- Review method: deterministic evidence audit only (`--deterministic`)."
+            + audit_note
+        )
+    if not os.environ.get("OPENAI_API_KEY"):
+        detail = "no model API key configured"
+    else:
+        detail = state.judgment_error or "committee unavailable"
+    return (
+        "- Review method: deterministic evidence audit only — the scientific committee "
+        f"did not run ({detail})." + audit_note
+    )
 
 
 def _compose_review(state: ReviewState) -> str:
@@ -708,10 +776,8 @@ def _compose_review(state: ReviewState) -> str:
         f"{label_counts['unverifiable']} unverifiable. Overall recommendation: {overall_value}/6 [{summary_anchor}]."
     )
     if state.scientific_judgment is not None:
-        scientific_summary = re.sub(
-            r"\s+",
-            " ",
-            state.scientific_judgment.summary.strip(),
+        scientific_summary = _sanitize_prose(
+            re.sub(r"\s+", " ", state.scientific_judgment.summary.strip())
         )
         summary_text = f"{scientific_summary} {audit_summary}"
     else:
@@ -735,17 +801,22 @@ def _compose_review(state: ReviewState) -> str:
                 f"(prompt `sha256:{prompt_sha}…`, temperature 0; "
                 f"{'grounded + calibration-only-lowers' if model_ok else 'unavailable — retrieval-grounded questions only'})._"
             )
-        judgment_block = f"\n## Scientific Judgment (best mode)\n\n{rendered_judgment}{provenance}\n"
+        judgment_block = f"\n## Scientific Judgment\n\n{rendered_judgment}{provenance}\n"
     else:
         judgment_block = ""
 
     # Closing reviewer comment (ICML-style), deterministic and always present.
     first_weakness = next((item["text"] for item in comments_by_section["Weaknesses"]), None)
     first_question = next((item["text"] for item in comments_by_section["Questions for the Authors"]), None)
-    if label_counts["contradicted"] or sr_dishonest or injection.get("findings"):
+    if label_counts["contradicted"] or sr_dishonest:
         verdict_note = (
-            "A proven integrity problem (a contradiction, concealed content, or a dishonest self-certification) is the "
+            "A proven integrity problem (a contradiction or dishonest self-certification) is the "
             "decisive factor and must be resolved before this paper can be accepted."
+        )
+    elif injection.get("findings"):
+        verdict_note = (
+            "Reviewer-directed concealed content was quarantined and reported "
+            "in Ethics; it did not affect the scientific assessment."
         )
     elif state.scientific_judgment is not None:
         if isinstance(overall_value, int) and overall_value >= 5:
@@ -788,12 +859,14 @@ def _compose_review(state: ReviewState) -> str:
     page_count = str(state.page_count) if state.page_count is not None else "n/a"
     converter = state.converter or "none (Markdown source)"
     scientific_trace = _committee_trace(state)
-    return f"""# Track 2 — ICML-Style Review
+    review_method = _review_method_line(state)
+    return f"""# ICML-Style Paper Review
 
 ## Paper and Evidence Identity
 
-- Review Agent name/version: NFL-Auditor / `{state.agent_version}`
-- `review-agent.md` path/hash: `{state.review_agent_path}` / `sha256:{state.review_agent_hash}`
+{review_method}
+- Review Agent name/version: paper-reviewer / `{state.agent_version}`
+- Review-agent spec path/hash: `{state.review_agent_path}` / `sha256:{state.review_agent_hash}`
 {original_identity_line}
 {derived_identity_line}
 - Original PDF page count: `{page_count}`
@@ -866,12 +939,12 @@ def _judgment_enabled() -> bool:
     byte-compatible with audit apart from already-established volatile fields.
     """
 
-    return bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("RALPH_BEST_RETRIEVAL"))
+    return bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("REVIEWER_BEST_RETRIEVAL"))
 
 
 def _best_packet_chars() -> int:
     try:
-        return max(8_000, int(os.environ.get("RALPH_BEST_MAX_CHARS", "60000")))
+        return max(8_000, int(os.environ.get("REVIEWER_BEST_MAX_CHARS", "60000")))
     except (TypeError, ValueError):
         return 60_000
 
@@ -975,11 +1048,6 @@ def _committee_inputs(
     ]
     finding_ids = [finding["id"] for finding in findings]
     claim_ids = [claim["id"] for claim in claims]
-    injection_ids = [
-        record["id"]
-        for record in state.finding_records
-        if record.get("check") == "injection-scan"
-    ]
     retrieved_prior_work: list[dict[str, Any]] = []
     arxiv_ids: list[str] = []
     for trace in (retrieval or {}).get("traces", []):
@@ -994,6 +1062,11 @@ def _committee_inputs(
             {
                 "id": grounding_id,
                 "title": str(trace.get("title", "")),
+                # The abstract is the actual "scientific evidence": it lets the
+                # committee compare the submission's method/claims against what this
+                # related work really did, not just its title. Bounded to keep the
+                # committee prompt within budget.
+                "abstract": " ".join(str(trace.get("summary", "")).split())[:600],
                 "published": str(trace.get("published", "")),
                 "temporal_relation": str(trace.get("temporal_relation", "unknown")),
                 "similarity": trace.get("similarity"),
@@ -1001,7 +1074,11 @@ def _committee_inputs(
                 "mentioned_by_title": bool(trace.get("mentioned_by_title")),
             }
         )
-    integrity_ids = tuple([*all_contradicted_ids, *self_review_ids, *injection_ids])
+    # Injection findings stay redacted from model prompts and remain visible in
+    # the audit summary, but cannot cap scientific scores: all downstream analysis
+    # sees the sanitized twin, so scoring the hidden payload would violate the
+    # injection-invariance contract.
+    integrity_ids = tuple([*all_contradicted_ids, *self_review_ids])
     audit = {
         "audit_identity": state.review_identity,
         "summary": {
@@ -1079,6 +1156,15 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return _apply_legacy_retrieval_layer(state)
+    # Committee enabled (key present) but no model: a config error affecting every
+    # paper identically, so fail loud rather than silently downgrade. Raised before
+    # the isolation try so it surfaces instead of collapsing to a per-paper fallback.
+    if not os.environ.get("OPENAI_MODEL"):
+        raise RuntimeError(
+            "OPENAI_MODEL is not set but the scientific committee is enabled "
+            "(OPENAI_API_KEY present). Set OPENAI_MODEL (e.g. gpt-5.6-sol) in your "
+            ".env or environment, or run with --deterministic to skip the committee."
+        )
 
     try:
         committee_started = time.monotonic()
@@ -1087,7 +1173,16 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
             max_chars=_best_packet_chars(),
         )
         paper_span_ids = [span.id for span in packet.spans]
-        retrieval = check_novelty_positioning(state.parsed_paper)
+        # Reviewer-style prior-art queries (by idea, not title tokens) so retrieval
+        # finds the real related work; degrades to the lexical query on failure.
+        scout_queries = generate_search_queries(
+            title=_paper_title(state.parsed_paper),
+            abstract=packet.text[:2500],
+            api_key=api_key,
+        )
+        retrieval = check_novelty_positioning(
+            state.parsed_paper, queries=scout_queries or None
+        )
         deterministic_audit, grounding, integrity_breach, integrity_ids = _committee_inputs(
             state,
             paper_span_ids,
@@ -1185,7 +1280,7 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
 
 
 class ReviewPipeline:
-    """Execute the S1-S6 walking skeleton in the specified order."""
+    """Execute the ordered S1-S6 pipeline stages."""
 
     def __init__(self) -> None:
         self._stages: tuple[Callable[[ReviewState], ReviewState], ...] = (
@@ -1199,9 +1294,21 @@ class ReviewPipeline:
 
     @staticmethod
     def _compose(state: ReviewState) -> ReviewState:
-        state.draft_comments = draft_comments(state.claims, state.verdicts, state.finding_records)
+        scientific_findings = [
+            finding
+            for finding in state.finding_records
+            if finding.get("check") != "injection-scan"
+        ]
+        state.draft_comments = draft_comments(
+            state.claims,
+            state.verdicts,
+            scientific_findings,
+        )
         state.grounding_audit = ground_comments(
-            state.draft_comments, state.claims, state.verdicts, state.finding_records
+            state.draft_comments,
+            state.claims,
+            state.verdicts,
+            scientific_findings,
         )
         state.grounded_comments = state.grounding_audit["comments"]
         sr_dishonest = len(state.mechanical_checks.get("self-review-audit", {}).get("findings", []))
@@ -1219,7 +1326,7 @@ class ReviewPipeline:
         paper_path: Path,
         evidence_dir: Path,
         output_path: Path,
-        mode: str = "audit",
+        mode: str = "best",
         *,
         prepared_paper: PreparedPaper | None = None,
     ) -> ReviewState:
@@ -1280,7 +1387,7 @@ def run_pipeline(
     paper_path: Path,
     evidence_dir: Path,
     output_path: Path,
-    mode: str = "audit",
+    mode: str = "best",
     *,
     prepared_paper: PreparedPaper | None = None,
 ) -> ReviewState:

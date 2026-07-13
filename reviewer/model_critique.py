@@ -89,6 +89,11 @@ def _default_client(base_url: str, api_key: str, model: str, max_tokens: int, ti
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
         }
+        effort = os.environ.get("REVIEWER_COMMITTEE_EFFORT", "").strip().lower()
+        if effort:
+            # Reasoning models (e.g. gpt-5.x) honor this; a model that rejects it
+            # returns 400 and the retry loop below drops it automatically.
+            params["reasoning_effort"] = effort
         for _ in range(len(params)):
             request = Request(
                 base_url.rstrip("/") + "/chat/completions",

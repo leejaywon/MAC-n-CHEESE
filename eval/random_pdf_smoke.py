@@ -794,7 +794,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--count", type=int, default=DEFAULT_COUNT)
     parser.add_argument("--seed", type=_parse_seed)
-    parser.add_argument("--mode", choices=("audit", "best"))
+    parser.add_argument("--mode", choices=("audit", "best"), default="audit")
     parser.add_argument("--replay", type=Path, help="existing schema-v1 manifest to replay")
     parser.add_argument("--run-dir", type=Path, help="artifact directory for this run")
     parser.add_argument("--per-category", type=int, default=DEFAULT_PER_CATEGORY)

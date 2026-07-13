@@ -91,7 +91,7 @@ def _evaluate_external() -> dict[str, float | int]:
             sibling = external_dir / paper.stem
             evidence_dir = sibling if sibling.is_dir() else Path(empty_evidence)
             try:
-                state = run_pipeline(paper, evidence_dir, Path(out_dir) / paper.name)
+                state = run_pipeline(paper, evidence_dir, Path(out_dir) / paper.name, mode="audit")
             except Exception as error:  # noqa: BLE001 — a crash is the signal, not a stop
                 print(f"external: {paper.name} crashed: {error!r}", file=sys.stderr)
                 completeness_values.append(0.0)
@@ -123,7 +123,7 @@ def _evaluate() -> dict[str, float | int]:
         for paper_name, case in sorted(papers.items()):
             paper_path = EVAL_DIR / "papers" / paper_name
             evidence_dir = EVAL_DIR / str(case["evidence_dir"])
-            state = run_pipeline(paper_path, evidence_dir, Path(output_dir) / paper_name)
+            state = run_pipeline(paper_path, evidence_dir, Path(output_dir) / paper_name, mode="audit")
             states[paper_name] = state
             findings = list(state.mechanical_findings)
             flaws = list(case.get("flaws", []))

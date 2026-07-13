@@ -14,11 +14,11 @@ from reviewer import prepare_paper, run_pipeline
 def _load_dotenv(path: Path) -> None:
     """Populate ``os.environ`` from a ``.env`` file for keys not already set.
 
-    Dependency-free so the ``--best`` committee can read ``OPENAI_API_KEY`` /
+    Dependency-free so the scientific committee can read ``OPENAI_API_KEY`` /
     ``REVIEWER_BEST_RETRIEVAL`` from the gitignored ``.env`` a user copies from
     ``.env.example``. Exported shell variables always win; blank/comment/malformed
-    lines are skipped. Audit mode never consults these, so this changes nothing
-    for the deterministic default path.
+    lines are skipped. ``--deterministic`` never consults these, so it stays fully
+    offline and reproducible.
     """
 
     if not path.is_file():
@@ -50,13 +50,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--out", required=True, type=Path, help="review Markdown output path")
     parser.add_argument(
-        "--mode",
-        choices=("audit", "best"),
-        default="audit",
+        "--deterministic",
+        action="store_true",
         help=(
-            "audit (default): deterministic, reproducible, injection-proof evidence "
-            "audit. best: audit plus three scientific specialists and one grounded "
-            "area-chair meta-review, with per-paper deterministic fallback."
+            "skip the scientific committee: a fully deterministic, reproducible, "
+            "offline evidence audit with no model calls or API cost. The default "
+            "adds three scientific specialists and a grounded area-chair "
+            "meta-review on top, with per-paper deterministic fallback."
         ),
     )
     return parser
@@ -85,7 +85,7 @@ def main() -> int:
             args.paper,
             evidence_dir,
             args.out,
-            mode=args.mode,
+            mode="audit" if args.deterministic else "best",
             prepared_paper=prepared,
         )
     except (FileNotFoundError, NotADirectoryError, RuntimeError, ValueError) as error:
@@ -93,7 +93,7 @@ def main() -> int:
     finally:
         if empty_evidence is not None:
             empty_evidence.cleanup()
-    print(f"wrote {state.output_path} [mode={state.mode}] ({', '.join(state.completed_stages)})")
+    print(f"wrote {state.output_path} ({', '.join(state.completed_stages)})")
     return 0
 
 

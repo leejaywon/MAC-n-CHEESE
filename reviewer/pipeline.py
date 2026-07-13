@@ -23,6 +23,7 @@ from .composer import (
 )
 from .document import PreparedPaper, SourceIdentity, prepare_paper
 from .injection_scan import check_injection_scan, scan_and_sanitize
+from .manuscript_integrity import check_cross_references, check_manuscript_artifacts
 from .mechanical_checks import check_arithmetic, check_internal_consistency, check_ledger_trace
 from .model_critique import (
     committee_review as _committee_review,
@@ -32,6 +33,7 @@ from .negative_evidence import check_negative_evidence
 from .novelty_positioning import check_novelty_positioning
 from .parser import parse_markdown
 from .positioning import check_positioning
+from .prose_hygiene import sanitize as _sanitize_prose
 from .review_schema import ScientificJudgment
 from .rigor_checklist import rigor_checklist_questions
 from .scientific_review import build_evidence_packet, validate_judgment
@@ -216,6 +218,8 @@ def _run_mechanical_checks(state: ReviewState) -> ReviewState:
         check_ledger_trace(state.parsed_paper, state.evidence_dir, state.event_format),
         check_internal_consistency(state.parsed_paper),
         check_arithmetic(state.parsed_paper),
+        check_cross_references(state.parsed_paper),
+        check_manuscript_artifacts(state.parsed_paper),
         check_baseline_fairness(state.parsed_paper, state.evidence_dir),
         check_negative_evidence(state.parsed_paper, state.evidence_dir),
         citation_check,
@@ -457,10 +461,8 @@ def _grounding_ids(value: object) -> tuple[str, ...]:
 
 
 def _scientific_comment_text(comment: object) -> str:
-    text = re.sub(
-        r"\s+",
-        " ",
-        str(getattr(comment, "text", "")).strip(),
+    text = _sanitize_prose(
+        re.sub(r"\s+", " ", str(getattr(comment, "text", "")).strip())
     )
     grounding = ", ".join(_grounding_ids(getattr(comment, "grounding", ())))
     return f"{text} [{grounding}]" if grounding else text
@@ -468,10 +470,8 @@ def _scientific_comment_text(comment: object) -> str:
 
 def _scientific_question_text(question: object) -> str:
     text = _scientific_comment_text(question)
-    assessment = re.sub(
-        r"\s+",
-        " ",
-        str(getattr(question, "assessment_if_resolved", "")).strip(),
+    assessment = _sanitize_prose(
+        re.sub(r"\s+", " ", str(getattr(question, "assessment_if_resolved", "")).strip())
     )
     return (
         f"{text} Assessment if resolved: {assessment}"
@@ -775,10 +775,8 @@ def _compose_review(state: ReviewState) -> str:
         f"{label_counts['unverifiable']} unverifiable. Overall recommendation: {overall_value}/6 [{summary_anchor}]."
     )
     if state.scientific_judgment is not None:
-        scientific_summary = re.sub(
-            r"\s+",
-            " ",
-            state.scientific_judgment.summary.strip(),
+        scientific_summary = _sanitize_prose(
+            re.sub(r"\s+", " ", state.scientific_judgment.summary.strip())
         )
         summary_text = f"{scientific_summary} {audit_summary}"
     else:

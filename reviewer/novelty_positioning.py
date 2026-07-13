@@ -196,6 +196,7 @@ def check_novelty_positioning(
     max_results: int = 10,
     min_similarity: float = 0.10,
     max_questions: int = 3,
+    queries: list[str] | None = None,
 ) -> dict[str, Any]:
     """Retrieve real prior work and surface closely-related papers left uncited.
 
@@ -207,11 +208,23 @@ def check_novelty_positioning(
     fetch = fetch or _default_fetch
 
     topic_terms = _topic_terms(parsed_paper)
-    query = " OR ".join(topic_terms)
-    if not query:
-        return {"check": "novelty-positioning", "query": "", "retrieved": [], "traces": [], "questions": []}
-
-    entries = _retrieve_arxiv(query, cache_dir, fetch, max_results)
+    if queries:
+        # Reviewer-style queries (LLM-generated from the contribution) searched by
+        # relevance and merged — semantically targeted prior art, not a lexical
+        # OR of title tokens. The Jaccard filter below still ranks precision.
+        query = " ; ".join(queries)
+        entries = []
+        seen_ids: set[str] = set()
+        for one_query in queries:
+            for entry in _retrieve_arxiv(one_query, cache_dir, fetch, max_results):
+                if entry["id"] not in seen_ids:
+                    seen_ids.add(entry["id"])
+                    entries.append(entry)
+    else:
+        query = " OR ".join(topic_terms)
+        if not query:
+            return {"check": "novelty-positioning", "query": "", "retrieved": [], "traces": [], "questions": []}
+        entries = _retrieve_arxiv(query, cache_dir, fetch, max_results)
     cited_ids = _cited_arxiv_ids(parsed_paper)
     paper_tokens = set(_normalize_tokens(paper_text(parsed_paper)))
     topic_token_set = set(topic_terms) | set(_normalize_tokens(_abstract(parsed_paper)))
@@ -246,6 +259,7 @@ def check_novelty_positioning(
         trace = {
             "id": entry["id"],
             "title": entry["title"],
+            "summary": entry.get("summary", ""),
             "published": published_text,
             "retrieved_at": retrieved_at,
             "temporal_relation": temporal_relation,

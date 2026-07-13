@@ -1061,6 +1061,11 @@ def _committee_inputs(
             {
                 "id": grounding_id,
                 "title": str(trace.get("title", "")),
+                # The abstract is the actual "scientific evidence": it lets the
+                # committee compare the submission's method/claims against what this
+                # related work really did, not just its title. Bounded to keep the
+                # committee prompt within budget.
+                "abstract": " ".join(str(trace.get("summary", "")).split())[:600],
                 "published": str(trace.get("published", "")),
                 "temporal_relation": str(trace.get("temporal_relation", "unknown")),
                 "similarity": trace.get("similarity"),

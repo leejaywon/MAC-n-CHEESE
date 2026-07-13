@@ -22,11 +22,10 @@ _BROKEN_FLOAT_REF = re.compile(
 _UNRENDERED_REF = re.compile(r"\\(?:ref|eqref|autoref|cref|Cref)\s*\{[^}]*\}")
 _BROKEN_CITE = re.compile(r"\[\s*\?\s*\]")  # failed \cite renders as [?]
 _UNDEFINED_REF = re.compile(r"(?i)\bundefined (?:reference|control sequence|citation)\b")
-# Eaten leading backslash: "\ref{tab:main}" -> "eftab:main", "\rightarrow" ->
-# "ightarrow". Very common in real submission PDFs, and invisible to the patterns
-# above (no "??" or "\ref{").
+# Eaten leading backslash: pymupdf drops the "\r" of "\ref{tab:main}", leaving
+# "eftab:main" — a cross-reference that never resolved to a numbered float and is
+# invisible to the patterns above (no "??" or "\ref{").
 _GARBLED_REF = re.compile(r"\bef[a-z]{2,}:[a-z]+\b")
-_GARBLED_CMD = re.compile(r"\b(?:ightarrow|eftarrow|Rightarrow|ightharpoonup)\b")
 
 # Compilation / template artifacts.
 _ARTIFACT = re.compile(
@@ -54,7 +53,6 @@ def check_cross_references(parsed_paper: dict[str, Any]) -> dict[str, Any]:
             (_UNRENDERED_REF, "unrendered LaTeX reference"),
             (_BROKEN_CITE, "failed citation"),
             (_GARBLED_REF, "garbled cross-reference"),
-            (_GARBLED_CMD, "garbled LaTeX command"),
         ):
             match = pattern.search(line)
             if not match:

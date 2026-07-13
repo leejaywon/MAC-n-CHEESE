@@ -28,6 +28,7 @@ from .mechanical_checks import check_arithmetic, check_internal_consistency, che
 from .model_critique import (
     committee_review as _committee_review,
     compute_judgment_identity,
+    generate_search_queries,
 )
 from .negative_evidence import check_negative_evidence
 from .novelty_positioning import check_novelty_positioning
@@ -1163,7 +1164,16 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
             max_chars=_best_packet_chars(),
         )
         paper_span_ids = [span.id for span in packet.spans]
-        retrieval = check_novelty_positioning(state.parsed_paper)
+        # Reviewer-style prior-art queries (by idea, not title tokens) so retrieval
+        # finds the real related work; degrades to the lexical query on failure.
+        scout_queries = generate_search_queries(
+            title=_paper_title(state.parsed_paper),
+            abstract=packet.text[:2500],
+            api_key=api_key,
+        )
+        retrieval = check_novelty_positioning(
+            state.parsed_paper, queries=scout_queries or None
+        )
         deterministic_audit, grounding, integrity_breach, integrity_ids = _committee_inputs(
             state,
             paper_span_ids,

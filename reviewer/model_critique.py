@@ -124,6 +124,51 @@ def _default_client(base_url: str, api_key: str, model: str, max_tokens: int, ti
     return call
 
 
+_QUERY_SCOUT_SYSTEM = (
+    "You are a literature scout for a paper reviewer. Read the submission's title and "
+    "prioritized text, then output the arXiv searches a reviewer would run to check "
+    "whether its core contribution already exists. Return STRICT JSON "
+    '{"queries": ["...", ...]} with 3 to 5 queries, each 3-8 content words naming the '
+    "specific idea, method, task, or setting — never title buzzwords, boolean "
+    "operators, or quotes. No prose."
+)
+
+
+def generate_search_queries(
+    *,
+    title: str,
+    abstract: str,
+    api_key: str,
+    base_url: str | None = None,
+    model: str | None = None,
+    timeout: int = 30,
+    client: Client | None = None,
+    max_queries: int = 5,
+) -> list[str]:
+    """Ask the model for reviewer-style prior-art queries (by idea, not title tokens).
+
+    A failure (no key, network, malformed JSON) returns an empty list so the caller
+    degrades to the deterministic lexical fallback rather than blocking the review.
+    """
+
+    base_url = base_url or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL
+    model = model or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL
+    call = client or _default_client(base_url, api_key, model, 512, timeout)
+    payload = {"title": " ".join(title.split())[:300], "prioritized_text": abstract[:2500]}
+    try:
+        raw = call(
+            [
+                {"role": "system", "content": _QUERY_SCOUT_SYSTEM},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ]
+        )
+        data = json.loads(raw)
+        queries = [" ".join(str(item).split()) for item in data.get("queries", []) if str(item).strip()]
+        return [query for query in queries if 2 <= len(query.split()) <= 12][:max_queries]
+    except Exception:  # noqa: BLE001 - degrade to the lexical fallback
+        return []
+
+
 def _bounded_paper(sanitized_paper: str, max_chars: int) -> tuple[str, list[str]]:
     """Keep high-value Markdown sections when a paper exceeds the prompt budget."""
 

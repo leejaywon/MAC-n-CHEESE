@@ -40,7 +40,6 @@ from .scientific_review import (
 )
 
 
-DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 CALIBRATABLE = (
     "Soundness",
@@ -77,6 +76,23 @@ SYSTEM_PROMPT = (
     "own text supports it. Prefer FEWER, specific, grounded items over filler; if "
     "you cannot form a specific grounded critique, return an empty items list."
 )
+
+
+def _resolve_model(model: str | None) -> str:
+    """Resolve the committee model, or fail loudly — never silently downgrade.
+
+    An explicit ``model`` wins; otherwise ``OPENAI_MODEL`` must be set. There is
+    deliberately no built-in default: a missing model on the committee path is a
+    configuration error, not a reason to quietly fall back to a weaker model.
+    """
+
+    resolved = (model or os.environ.get("OPENAI_MODEL") or "").strip()
+    if not resolved:
+        raise RuntimeError(
+            "OPENAI_MODEL is not set; refusing to guess a model. Set OPENAI_MODEL "
+            "(e.g. gpt-5.6-sol), or run with --deterministic to skip the committee."
+        )
+    return resolved
 
 
 def _default_client(base_url: str, api_key: str, model: str, max_tokens: int, timeout: int) -> Client:
@@ -152,7 +168,9 @@ def generate_search_queries(
     """
 
     base_url = base_url or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL
-    model = model or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL
+    model = model or os.environ.get("OPENAI_MODEL")
+    if not model:
+        return []  # no model configured: degrade to the deterministic lexical query
     call = client or _default_client(base_url, api_key, model, 512, timeout)
     payload = {"title": " ".join(title.split())[:300], "prioritized_text": abstract[:2500]}
     try:
@@ -330,10 +348,10 @@ def critique(
     max_tokens: int = 800,
     timeout: int = 30,
 ) -> dict[str, Any]:
-    """Legacy lower-only response for callers not yet using ``committee_review``."""
+    """Single-call critique with grounded comments and lower-only score calibration."""
 
     base_url = base_url or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL
-    model = model or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL
+    model = _resolve_model(model)
     allowed = _allowed_sets(grounding)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -946,7 +964,7 @@ def committee_review(
     """Run three specialists plus one meta-review, never raising on call failure."""
 
     base_url = str(base_url or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL)
-    model = str(model or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL)
+    model = _resolve_model(model)
     audit_identity = str(audit_identity)
     timeout_seconds = (
         max(1, timeout)

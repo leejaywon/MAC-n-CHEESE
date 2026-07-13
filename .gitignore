@@ -16,3 +16,18 @@ eval/random_pdf_runs/
 
 # Archived Ralphthon-era run artifacts (kept locally, out of git)
 /archive/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Python build & tool caches
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/

@@ -24,9 +24,9 @@ _DISABLE_JUDGMENT = mock.patch.dict(
 ROOT = Path(__file__).resolve().parents[1]
 PAPER = ROOT / "eval/papers/clean_val_bpb.md"
 EVIDENCE = ROOT / "eval/evidence/clean_val_bpb"
-# Lines that legitimately differ between two runs / two output files: the UTC
-# freeze stamp (per run) and the recorded output path (per file). Everything else
-# is a pure function of the frozen inputs and the reviewer source.
+# Lines that legitimately differ between two runs / two output files: 
+# the UTC freeze stamp (per run) and the recorded output path (per file).
+# Everything else is a pure function of the frozen inputs and the reviewer source.
 VOLATILE_RE = re.compile(r"^- (?:Frozen at \(UTC\)|Output path|Review method):.*$", re.M)
 
 
@@ -176,7 +176,7 @@ class ModeTests(unittest.TestCase):
         pipeline_module._committee_review = fake_committee
         pipeline_module.generate_search_queries = lambda **kwargs: []
         try:
-            with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=False), \
+            with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test", "OPENAI_MODEL": "gpt-test"}, clear=False), \
                     tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 paper = root / "peer.md"
@@ -202,6 +202,16 @@ class ModeTests(unittest.TestCase):
         self.assertEqual(state.scores["Overall recommendation"]["value"], 2)
         self.assertEqual(state.scores["Soundness"]["value"], 2)
         self.assertEqual(len(state.scientific_judgment.questions), 3)
+
+    def test_committee_enabled_without_model_fails_loud(self) -> None:
+        # A committee-enabled run (API key present) with no OPENAI_MODEL must raise
+        # a clear config error rather than silently downgrading to a weak default.
+        with mock.patch.dict(
+            os.environ, {"OPENAI_API_KEY": "sk-test", "OPENAI_MODEL": ""}, clear=False
+        ), tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(RuntimeError) as caught:
+                _review("best", directory)
+        self.assertIn("OPENAI_MODEL", str(caught.exception))
 
 
 if __name__ == "__main__":

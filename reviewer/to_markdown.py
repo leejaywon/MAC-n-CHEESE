@@ -121,35 +121,51 @@ _IMAGE_OCR_BLOCK = re.compile(
 )
 
 
+# A margin line number is a bare 3-digit counter — one that stands alone between
+# whitespace. Requiring whitespace on both sides is what protects real glued tokens
+# (``H100``, ``CIFAR-100``, ``EXPT-001``): those never lose their number. The band
+# is found by the counters' one defining property — a long run of *consecutive*
+# integers — over the *set* of values present, so it is immune to the out-of-order
+# way pymupdf emits page regions (the earlier sequential walk stopped at the first
+# reorder and missed most counters). Zero-padded to three digits, so 4-digit years
+# and decimals are never candidates.
+_MARGIN_COUNTER = re.compile(r"(?<!\S)\d{3}(?!\S)")
+_MARGIN_MIN_RUN = 6  # a value is a counter only inside a consecutive run this long
+_MARGIN_MIN_TOTAL = 30  # ...and the doc must carry this many to count as line-numbered
+
+
 def _strip_margin_line_numbers(markdown: str) -> str:
     """Remove ICML/NeurIPS margin line numbers that extraction inlines.
 
-    Submission PDFs number every line; pymupdf emits them as a long, near-monotonic
-    run of small integers ("000 001 002 ... 384") interleaved with the prose, which
-    poisons numeric/claim extraction. This threads that increasing sequence through
-    the integer-token stream and removes only its members — real numbers (e.g. 512
-    units, 53%) fall outside the running line-number band and are kept. It is a no-op
-    on any document that is not densely line-numbered.
+    Submission PDFs number every line; pymupdf emits those counters into the prose
+    as standalone integers ("000 001 002 ... 384") that poison numeric/claim
+    extraction. A counter is removed only when its value belongs to a run of at
+    least ``_MARGIN_MIN_RUN`` consecutive present values and the document carries at
+    least ``_MARGIN_MIN_TOTAL`` of them; real numbers (512 units, 53%) sit outside
+    the run and are kept, and a counter fused into a word by a line break
+    ("low205 pressure") is deliberately left alone — stripping word-glued digits
+    would eat legitimate names like ``H100``. No-op on any non-line-numbered doc.
     """
 
-    tokens = list(re.finditer(r"(?<![\w.])\d{1,4}(?![\w.,])", markdown))
-    flags = [False] * len(tokens)
-    expected: int | None = None
-    for index, token in enumerate(tokens):
-        value = int(token.group())
-        if expected is None:
-            if value <= 3:  # line numbering starts at 000/001
-                expected, flags[index] = value, True
-        elif expected <= value <= expected + 8:
-            expected, flags[index] = value, True
-    if expected is None or expected < 50 or sum(flags) < 30:
-        return markdown  # not a line-numbered document
+    matches = list(_MARGIN_COUNTER.finditer(markdown))
+    present = {int(match.group()) for match in matches}
+    line_numbers: set[int] = set()
+    for value in present:
+        if value - 1 in present:
+            continue  # measure each consecutive run once, from its start
+        length = 1
+        while value + length in present:
+            length += 1
+        if length >= _MARGIN_MIN_RUN:
+            line_numbers.update(range(value, value + length))
+    if len(line_numbers) < _MARGIN_MIN_TOTAL:
+        return markdown  # not a densely line-numbered document
     out: list[str] = []
     cursor = 0
-    for index, token in enumerate(tokens):
-        if flags[index]:
-            out.append(markdown[cursor:token.start()])
-            cursor = token.end()
+    for match in matches:
+        if int(match.group()) in line_numbers:
+            out.append(markdown[cursor : match.start()])
+            cursor = match.end()
     out.append(markdown[cursor:])
     return re.sub(r"[ \t]{2,}", " ", "".join(out))
 

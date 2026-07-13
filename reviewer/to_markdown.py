@@ -121,6 +121,39 @@ _IMAGE_OCR_BLOCK = re.compile(
 )
 
 
+def _strip_margin_line_numbers(markdown: str) -> str:
+    """Remove ICML/NeurIPS margin line numbers that extraction inlines.
+
+    Submission PDFs number every line; pymupdf emits them as a long, near-monotonic
+    run of small integers ("000 001 002 ... 384") interleaved with the prose, which
+    poisons numeric/claim extraction. This threads that increasing sequence through
+    the integer-token stream and removes only its members — real numbers (e.g. 512
+    units, 53%) fall outside the running line-number band and are kept. It is a no-op
+    on any document that is not densely line-numbered.
+    """
+
+    tokens = list(re.finditer(r"(?<![\w.])\d{1,4}(?![\w.,])", markdown))
+    flags = [False] * len(tokens)
+    expected: int | None = None
+    for index, token in enumerate(tokens):
+        value = int(token.group())
+        if expected is None:
+            if value <= 3:  # line numbering starts at 000/001
+                expected, flags[index] = value, True
+        elif expected <= value <= expected + 8:
+            expected, flags[index] = value, True
+    if expected is None or expected < 50 or sum(flags) < 30:
+        return markdown  # not a line-numbered document
+    out: list[str] = []
+    cursor = 0
+    for index, token in enumerate(tokens):
+        if flags[index]:
+            out.append(markdown[cursor:token.start()])
+            cursor = token.end()
+    out.append(markdown[cursor:])
+    return re.sub(r"[ \t]{2,}", " ", "".join(out))
+
+
 def _strip_image_ocr(markdown: str) -> str:
     """Drop pymupdf4llm image-OCR blocks (figure/chart text) from the Markdown.
 
@@ -311,6 +344,7 @@ def pdf_to_markdown_with_visibility(pdf_path: Path) -> PdfMarkdownConversion:
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+    markdown = _strip_margin_line_numbers(markdown)
     markdown = _strip_image_ocr(markdown)
     markdown = _strip_leading_boilerplate(markdown)
     markdown = _fix_numeric_emphasis(markdown)

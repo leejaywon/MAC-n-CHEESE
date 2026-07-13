@@ -29,6 +29,15 @@ class CrossReferenceTests(unittest.TestCase):
             1,
         )
 
+    def test_garbled_eaten_backslash_refs(self) -> None:
+        # "\ref{tab:main}" -> "eftab:main", "\rightarrow" -> "ightarrow".
+        self.assertEqual(
+            len(check_cross_references(_paper("As shown in Table eftab:main."))["findings"]), 1
+        )
+        self.assertEqual(
+            len(check_cross_references(_paper("The score moves 0.71 ightarrow 0.77."))["findings"]), 1
+        )
+
     def test_clean_references_pass(self) -> None:
         result = check_cross_references(_paper("See Figure 3 and Table 1 for details."))
         self.assertEqual(result["findings"], [])

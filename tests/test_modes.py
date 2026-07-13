@@ -171,8 +171,10 @@ class ModeTests(unittest.TestCase):
                 },
             }
 
+        original_scout = pipeline_module.generate_search_queries
         pipeline_module.check_novelty_positioning = fake_retrieval
         pipeline_module._committee_review = fake_committee
+        pipeline_module.generate_search_queries = lambda **kwargs: []
         try:
             with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=False), \
                     tempfile.TemporaryDirectory() as directory:
@@ -189,6 +191,7 @@ class ModeTests(unittest.TestCase):
         finally:
             pipeline_module.check_novelty_positioning = original_retrieval
             pipeline_module._committee_review = original_committee
+            pipeline_module.generate_search_queries = original_scout
 
         markdown = state.review_markdown
         self.assertIn("The method is clear, but the empirical scope is narrow.", markdown)

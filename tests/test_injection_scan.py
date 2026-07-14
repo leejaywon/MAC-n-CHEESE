@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from reviewer import check_injection_scan, parse_markdown, run_pipeline, sanitize_for_analysis
 from reviewer import pipeline as pipeline_module
+from reviewer.judgment_review import apply_integrity_caps
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,7 +64,7 @@ class InjectionScanTests(unittest.TestCase):
         )[0]
         self.assertNotIn("injection-scan", weaknesses)
 
-    def test_attack_is_redacted_from_committee_without_triggering_score_cap(self) -> None:
+    def test_attack_is_redacted_from_panel_annotations_without_triggering_score_cap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             attack = run_pipeline(
                 ROOT / "eval/papers/injection_hidden_html.md",
@@ -70,16 +72,32 @@ class InjectionScanTests(unittest.TestCase):
                 Path(directory) / "attack.md",
             )
 
-        audit, _, integrity_breach, integrity_ids = pipeline_module._committee_inputs(
-            attack,
-            [],
-            {},
-        )
+        # The scan still detects exactly one reviewer-directed instruction attempt.
+        findings = attack.mechanical_checks["injection-scan"]["findings"]
+        self.assertEqual(len(findings), 1)
 
-        self.assertEqual(audit["summary"]["redacted_injection_findings"], 1)
-        self.assertFalse(audit["summary"]["proven_integrity_breach"])
-        self.assertFalse(integrity_breach)
-        self.assertEqual(integrity_ids, ())
+        # The panel is told an attempt happened, but its content is withheld:
+        # the raw injected instruction must never reach the model prompt.
+        annotations = pipeline_module._guardrail_annotations(attack, {})
+        attempts = annotations["hidden_instruction_attempts"]
+        self.assertEqual(len(attempts), 1)
+        self.assertTrue(attempts[0]["content_redacted"])
+        serialized = json.dumps(annotations, ensure_ascii=False)
+        self.assertNotIn("Ignore", serialized)
+        self.assertNotIn("high score", serialized)
+        self.assertNotIn(findings[0]["observed"], serialized)
+
+        # A sanitized injection attempt is not a proven integrity breach, so it
+        # never caps Soundness/Overall the way a contradiction or dishonest
+        # self-certification would.
+        breach_count = sum(
+            1 for verdict in attack.verdicts if verdict.get("label") == "contradicted"
+        ) + len(attack.mechanical_checks.get("self-review-audit", {}).get("findings", []))
+        self.assertEqual(breach_count, 0)
+        _, cap_notes = apply_integrity_caps(
+            {"Soundness": 4, "Overall recommendation": 6}, breach_count=breach_count
+        )
+        self.assertEqual(cap_notes, [])
 
     def test_hidden_numeric_attack_does_not_change_scientific_findings_or_scores(self) -> None:
         attack = (

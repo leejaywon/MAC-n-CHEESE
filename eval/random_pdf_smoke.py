@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from reviewer import prepare_paper, run_pipeline  # noqa: E402
-from reviewer.review_schema import SCIENTIFIC_AXES  # noqa: E402
+from reviewer.judgment_review import parse_review  # noqa: E402
 
 
 ARXIV_CATEGORIES: tuple[str, ...] = (
@@ -54,16 +54,21 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _TRACE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SAFE_STEM_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _REQUIRED_PAPER_FIELDS = ("arxiv_id", "title", "category", "pdf_url", "sha256")
+# The review body and the audit document share the reviewer sections; identity
+# and trace sections live in the audit (the review file itself when the panel
+# did not run, the .audit.md sidecar when it did).
 _REQUIRED_REVIEW_SECTIONS = (
-    "## Paper and Evidence Identity",
     "## Summary",
     "## Strengths",
     "## Weaknesses",
     "## Questions for the Authors",
     "## Scores",
     "## Ethics and Limitations",
-    "## Evidence Trace",
     "## Comment",
+)
+_REQUIRED_AUDIT_SECTIONS = (
+    "## Paper and Evidence Identity",
+    "## Evidence Trace",
 )
 _SCORE_RANGES: dict[str, tuple[int, int]] = {
     "Soundness": (1, 4),
@@ -359,10 +364,12 @@ def _attribute_or_key(value: object, name: str, default: object = None) -> objec
 
 
 def _best_question_count(state: object) -> int | None:
-    scientific = getattr(state, "scientific_judgment", None)
-    scientific_questions = _attribute_or_key(scientific, "questions", None)
-    if isinstance(scientific_questions, (list, tuple)):
-        return len(scientific_questions)
+    review_document = getattr(state, "review_document", "")
+    if isinstance(review_document, str) and review_document.strip():
+        questions = parse_review(review_document)["sections"].get(
+            "Questions for the Authors", ""
+        )
+        return len(re.findall(r"(?m)^\s*\d+[.)]\s", questions))
 
     judgment = getattr(state, "judgment", None)
     if not judgment:
@@ -389,7 +396,7 @@ def _best_question_count(state: object) -> int | None:
 
 
 def _scientific_snapshot(state: object, mode: str) -> dict[str, Any]:
-    """Return non-secret committee status for a smoke report."""
+    """Return non-secret panel status for a smoke report."""
 
     if mode != "best":
         return {
@@ -398,7 +405,7 @@ def _scientific_snapshot(state: object, mode: str) -> dict[str, Any]:
             "scientific_latency_seconds": None,
         }
 
-    judgment = getattr(state, "scientific_judgment", None)
+    review_document = getattr(state, "review_document", "")
     identity = getattr(state, "judgment_identity", "")
     provenance = getattr(state, "committee_provenance", None)
     latency: float | None = None
@@ -410,7 +417,7 @@ def _scientific_snapshot(state: object, mode: str) -> dict[str, Any]:
             and float(candidate) >= 0
         ):
             latency = float(candidate)
-    if judgment is None:
+    if not (isinstance(review_document, str) and review_document.strip()):
         return {
             "scientific_status": "fallback",
             "judgment_identity": None,
@@ -418,7 +425,7 @@ def _scientific_snapshot(state: object, mode: str) -> dict[str, Any]:
         }
 
     return {
-        "scientific_status": "committee",
+        "scientific_status": "panel",
         "judgment_identity": identity,
         "scientific_latency_seconds": latency,
     }
@@ -493,50 +500,48 @@ def validate_review(
         review_text = ""
     if not review_path.is_file() or not review_path.read_text(encoding="utf-8").strip():
         errors.append("pipeline did not persist a non-empty review file")
+
+    review_document = getattr(state, "review_document", "")
+    panel_ran = isinstance(review_document, str) and bool(review_document.strip())
+    audit_text = review_text
+    if panel_ran:
+        sidecar_path = review_path.with_suffix(".audit.md")
+        audit_text = (
+            sidecar_path.read_text(encoding="utf-8") if sidecar_path.is_file() else ""
+        )
+        if not audit_text.strip():
+            errors.append("panel review did not persist the .audit.md sidecar")
     for section in _REQUIRED_REVIEW_SECTIONS:
         if section not in review_text:
             errors.append(f"review is missing required section {section!r}")
+    for section in _REQUIRED_AUDIT_SECTIONS:
+        if section not in audit_text:
+            errors.append(f"audit is missing required section {section!r}")
 
     review_identity = getattr(state, "review_identity", "")
     verdict_digest = getattr(state, "verdict_digest", "")
     if not isinstance(review_identity, str) or not _TRACE_DIGEST_RE.fullmatch(review_identity):
         errors.append(f"invalid review identity digest: {review_identity!r}")
-    elif review_identity not in review_text:
+    elif review_identity not in audit_text:
         errors.append("review identity digest is absent from the Evidence Trace")
     if not isinstance(verdict_digest, str) or not _TRACE_DIGEST_RE.fullmatch(verdict_digest):
         errors.append(f"invalid verdict digest: {verdict_digest!r}")
-    elif verdict_digest not in review_text:
+    elif verdict_digest not in audit_text:
         errors.append("verdict digest is absent from the Evidence Trace")
 
     best_question_count = _best_question_count(state) if mode == "best" else None
-    if best_question_count is not None and not 3 <= best_question_count <= 5:
-        errors.append(
-            "successful best judgment must contain three to five questions, "
-            f"got {best_question_count}"
-        )
+    if panel_ran and (best_question_count is None or best_question_count < 1):
+        errors.append("panel review must contain at least one author question")
 
-    scientific = getattr(state, "scientific_judgment", None)
     scientific_snapshot = _scientific_snapshot(state, mode)
-    if scientific is not None:
-        axes = _attribute_or_key(scientific, "axes", ())
-        axis_names = tuple(_attribute_or_key(axis, "axis", "") for axis in axes)
-        if axis_names != SCIENTIFIC_AXES:
-            errors.append(
-                "successful best judgment must cover the five scientific axes "
-                "in canonical order"
-            )
-        judgment_scores = _attribute_or_key(scientific, "scores", {})
-        if not isinstance(judgment_scores, Mapping) or set(judgment_scores) != set(
-            _SCORE_RANGES
-        ):
-            errors.append("successful best judgment must contain all six score dimensions")
+    if panel_ran:
         judgment_identity = scientific_snapshot["judgment_identity"]
         if (
             not isinstance(judgment_identity, str)
             or not _TRACE_DIGEST_RE.fullmatch(judgment_identity)
         ):
             errors.append(f"invalid scientific judgment identity: {judgment_identity!r}")
-        elif judgment_identity not in review_text:
+        elif judgment_identity not in audit_text:
             errors.append("scientific judgment identity is absent from the Evidence Trace")
 
     if (

@@ -27,17 +27,20 @@ _UNDEFINED_REF = re.compile(r"(?i)\bundefined (?:reference|control sequence|cita
 # invisible to the patterns above (no "??" or "\ref{").
 _GARBLED_REF = re.compile(r"\bef[a-z]{2,}:[a-z]+\b")
 
-# Compilation / template artifacts.
+# Compilation / template artifacts. Marker words match UPPERCASE only: leftover
+# build markers are conventionally written TODO/FIXME/TBD/PLACEHOLDER, while the
+# same words in lowercase running prose are ordinary content words — a paper
+# ABOUT placeholders or todo-list agents must not be flagged as unfinished
+# (word-level matching on prose is exactly the per-paper false-positive class
+# that destroys reviewer credibility). Distinctive phrases keep (?i:...).
 _ARTIFACT = re.compile(
     r"(?:"
     r"\bAUTHORERR\b"
     r"|\\author\s*\{\s*\}"
-    r"|(?<![\w-])(?:TODO|FIXME|TBD)(?![\w-])"
-    r"|\[citation needed\]"
-    r"|\blorem ipsum\b"
-    r"|(?<![\w-])PLACEHOLDER(?![\w-])"
+    r"|(?<![\w-])(?:TODO|FIXME|TBD|PLACEHOLDER)(?![\w-])"
+    r"|(?i:\[citation needed\])"
+    r"|(?i:\blorem ipsum\b)"
     r")",
-    re.I,
 )
 
 

@@ -68,6 +68,10 @@ committee. `--deterministic` never reads it and stays fully offline.
 
 ## How it works
 
+<p align="center">
+  <img src="docs/mac-figure.png" alt="Pipeline: paper (+ evidence) enters the deterministic audit (parse, claims, mech-check, verdicts, compose, freeze), crosses the freeze barrier, then the sanitized paper and neutral annotations fan out to the theorist, empiricist, and scope-and-ablation panelists, which the Area Chair synthesizes into review.md" width="720">
+</p>
+
 An ordered six-stage pipeline (`reviewer/pipeline.py`): **S1** parse → **S2**
 claim extraction → **S3** mechanical checks → **S4** evidence-bound verdicts →
 **S5** compose → **S6** freeze (content-addressed identity + verdict digest).

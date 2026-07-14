@@ -108,8 +108,8 @@ def generate_search_queries(
 ) -> list[str]:
     """Ask the model for reviewer-style prior-art queries (by idea, not title tokens).
 
-    A failure (no key, network, malformed JSON) returns an empty list so the caller
-    degrades to the deterministic lexical fallback rather than blocking the review.
+    A failure (no key, network, malformed JSON) returns an empty list
+    so the caller degrades to the deterministic lexical fallback rather than blocking the review.
     """
 
     base_url = base_url or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL

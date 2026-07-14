@@ -40,8 +40,8 @@ SCORE_BOUNDS = {
 _TITLE_RE = re.compile(r"(?im)^#\s*Review(?:\s+of)?:?\s*(.+?)\s*$")
 _WORD_RE = re.compile(r"[a-z0-9]+")
 # Headings that are section labels by convention, never paper titles.
-# When a paper's extraction yields one of these first, the title is UNKNOWN
-# the gate must go indeterminate rather than compare against a non-title.
+# When a paper's extraction yields one of these first,
+# the title is UNKNOWN the gate must go indeterminate rather than compare against a non-title.
 _NON_TITLE_RE = re.compile(
     r"(?i)^\s*(?:\d+[.)]|(?:abstract|introduction|references|bibliography|"
     r"appendix|related work|acknowledg|contents)\b)"
@@ -135,11 +135,8 @@ def apply_integrity_caps(
     return capped, notes
 
 
-# --- Panel committee: the multi-agent form that keeps every member whole. ---
-#
-# The committee lineage (theorist / experimentalist / scope_ablation) survives as reviewer EMPHASES
-# every panelist reads the FULL paper and writes a complete review with all six scores.
-# Differentiation of attention, not fragmentation of coverage
+# Panel emphases differentiate attention, not coverage: every panelist reads
+# the full paper and writes a complete review with all six scores.
 PANEL_EMPHASES: dict[str, str] = {
     "theorist": (
         "Panel emphasis: you lean theorist. Give extra scrutiny to whether the "
@@ -252,23 +249,30 @@ def run_panel_review(
 
     Failure-isolated like the committee it replaces:
     a panelist that errors, fails to parse, or fails the wrong-paper gate is dropped;
-    zero survivors returns ``{"ok": False}`` so the caller can fall back to the deterministic audit.
-    ``panel=1`` reproduces the validated single-reviewer configuration exactly
+    zero survivors returns ``{"ok": False}`` so the caller can fall back to the
+    deterministic audit. ``panel=1`` runs a single reviewer with no emphasis and
+    skips the area chair.
     """
 
     import os
     from concurrent.futures import ThreadPoolExecutor
     from hashlib import sha256 as _sha256
 
-    from .model_critique import DEFAULT_BASE_URL, DEFAULT_MODEL, _default_client
+    from .model_critique import DEFAULT_BASE_URL, _default_client, _resolve_model
 
     panel_size = panel if panel is not None else int(os.environ.get("REVIEWER_PANEL", "3") or 3)
     panel_size = max(1, panel_size)
     timeout = timeout if timeout is not None else int(os.environ.get("REVIEWER_COMMITTEE_TIMEOUT", "600") or 600)
     max_tokens = max_tokens if max_tokens is not None else int(os.environ.get("REVIEWER_MAX_TOKENS", "4096") or 4096)
     base_url = base_url or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL
-    model = model or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL
-    call = client or _default_client(base_url, api_key, model, max_tokens, timeout, json_mode=False)
+    if client is None:
+        # Fail loudly on a missing model — never silently downgrade.
+        # An injected client (tests, embedders) brings its own model, so no name is forced.
+        model = _resolve_model(model)
+        call = _default_client(base_url, api_key, model, max_tokens, timeout, json_mode=False)
+    else:
+        model = (model or os.environ.get("OPENAI_MODEL") or "injected-client").strip()
+        call = client
 
     roles: list[str | None]
     if panel_size == 1:

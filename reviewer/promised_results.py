@@ -1,14 +1,12 @@
 """Promised-but-unreported detection: papers that announce a held-out item and
 never report it.
 
-This is the one defect class that mechanical comparison catches more reliably
-than a human skim — a paper says "a seventh event is held out as an unseen
-transfer scenario" and the results section never mentions it again. It is also a
-class where pattern matching against prose is inherently noisy, so this check is
-**annotation-only by design**: it emits neutral traces for the judgment layer to
-weigh with full context, and NEVER findings. It must not touch scores, weakness
-lists, or verdicts on its own (the anti-overfit rule: class/convention signals,
-never per-paper cleverness promoted to judgment).
+Mechanical comparison catches this class more reliably than a human skim — a
+paper says "a seventh event is held out as an unseen transfer scenario" and the
+results section never mentions it again. Pattern matching against prose is
+inherently noisy, so the check is annotation-only: it emits neutral traces for
+the review panel to weigh with full context, never findings, and it must not
+touch scores, weakness lists, or verdicts on its own.
 """
 
 from __future__ import annotations

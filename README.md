@@ -1,12 +1,27 @@
-# MAC n CHEESE
+<p align="center">
+  <img src="docs/banner.png" alt="A committee of decapod-crowned academic reviewers auditing a manuscript" width="820">
+</p>
 
-*Multi-Agent Committee 'n Checking & Evaluating with Scientific Evidence*
+<h1 align="center">MAC n CHEESE</h1>
 
-An evidence-bound, ICML-style reviewer for scientific papers. Give it a paper as
-a **PDF or Markdown** file — optionally with an evidence bundle of result files —
-and it emits a structured review whose every score and claim is traceable to the
-paper text, its tables, or the supplied results. No fabricated praise, no
-ungrounded accusations.
+<p align="center">
+  <em>Multi-Agent Committee 'n Checking &amp; Evaluating with Scientific Evidence</em>
+</p>
+
+<p align="center">
+  🏆 <strong>Winner · Track 2 (Review Agent)</strong> — Ralphthon @ ICML 2026 Auto-Research
+</p>
+
+<p align="center">
+  An evidence-bound, ICML-style reviewer for scientific papers.
+</p>
+
+---
+
+Give it a paper as a **PDF or Markdown** file — optionally with an evidence bundle
+of result files — and it emits a structured review whose every score and claim is
+traceable to the paper text, its tables, or the supplied results. No fabricated
+praise, no ungrounded accusations.
 
 ## Input
 

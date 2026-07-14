@@ -46,6 +46,7 @@ class ModelCritiqueTests(unittest.TestCase):
             grounding=GROUNDING,
             anchor_scores=ANCHORS,
             api_key="sk-test",
+            model="stub-model",
             client=_client(response),
         )
 
@@ -137,6 +138,7 @@ class ModelCritiqueTests(unittest.TestCase):
             grounding=GROUNDING,
             anchor_scores=ANCHORS,
             api_key="sk-test",
+            model="stub-model",
             client=bad_client,
         )
         self.assertFalse(result["ok"])
@@ -159,6 +161,7 @@ class ModelCritiqueTests(unittest.TestCase):
                 grounding=GROUNDING,
                 anchor_scores=ANCHORS,
                 api_key="sk-test",
+                model="stub-model",
                 client=client,
             )
         self.assertTrue(result["ok"])

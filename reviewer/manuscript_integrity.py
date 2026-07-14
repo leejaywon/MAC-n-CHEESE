@@ -30,9 +30,7 @@ _GARBLED_REF = re.compile(r"\bef[a-z]{2,}:[a-z]+\b")
 # Compilation / template artifacts. Marker words match UPPERCASE only: leftover
 # build markers are conventionally written TODO/FIXME/TBD/PLACEHOLDER, while the
 # same words in lowercase running prose are ordinary content words — a paper
-# ABOUT placeholders or todo-list agents must not be flagged as unfinished
-# (word-level matching on prose is exactly the per-paper false-positive class
-# that destroys reviewer credibility). Distinctive phrases keep (?i:...).
+# about placeholders or todo-list agents must not be flagged as unfinished.
 _ARTIFACT = re.compile(
     r"(?:"
     r"\bAUTHORERR\b"

@@ -108,16 +108,19 @@ class PDFIngestionTests(unittest.TestCase):
             self.assertRegex(state.review_identity, r"^sha256:[0-9a-f]{64}$")
 
             rendered = review.read_text(encoding="utf-8")
+            # Identity lines carry basenames + hashes only: a review may be sent
+            # double-blind, so absolute paths (and usernames) must never leak.
             self.assertIn(
-                f"Original paper identity: `{prepared.original.path}` / "
+                f"Original paper identity: `{Path(prepared.original.path).name}` / "
                 f"`application/pdf` / `sha256:{prepared.original.sha256}`",
                 rendered,
             )
             self.assertIn(
-                f"Derived Markdown identity: `{prepared.markdown.path}` / "
+                f"Derived Markdown identity: `{Path(prepared.markdown.path).name}` / "
                 f"`text/markdown` / `sha256:{prepared.markdown.sha256}`",
                 rendered,
             )
+            self.assertNotIn(str(Path(prepared.original.path).parent), rendered)
             self.assertIn("Original PDF page count: `2`", rendered)
             self.assertIn(f"Converter: `{prepared.converter}`", rendered)
 

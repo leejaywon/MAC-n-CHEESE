@@ -2,7 +2,6 @@
 __pycache__/
 *.py[cod]
 .DS_Store
-.venv
 .venv/
 
 # Secrets — never commit real keys
@@ -13,9 +12,6 @@ __pycache__/
 # Fresh random-PDF smoke downloads, manifests, and generated reviews
 eval/random_pdf_runs/
 .reviewer_sources/
-
-# Archived Ralphthon-era run artifacts (kept locally, out of git)
-/archive/
 
 # Editor / IDE
 .vscode/

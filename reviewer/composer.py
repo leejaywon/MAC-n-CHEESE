@@ -1,23 +1,18 @@
-"""Two-pass deterministic composition plus validated committee score merging.
+"""Two-pass deterministic composition.
 
 The DRAFT pass is deliberately cheap and deterministic: it proposes short
 comments from S4 verdicts.  The GROUND pass is the authority.  It retains a
 statement only when its stance is licensed by the referenced claim verdict or
-finding.  This keeps the event runtime offline while preserving the same
-separation of responsibilities when best mode later adds a scientific
-committee judgment.
+finding.
 """
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping
+from typing import Any
 
-from .review_schema import ScientificJudgment
-
-
-# Checks whose findings are typographic/presentation remarks (broken \ref text, leftover TODO/AUTHORERR).
-# They may cap Presentation and appear as one minor remark,
-# but are excluded from soundness/confidence signals and from the closing "most useful next step" — a LaTeX typo must never decide a verdict.
+# Checks whose findings are typographic/presentation remarks (broken \ref text,
+# leftover TODO/AUTHORERR). They may cap Presentation and appear as one minor
+# remark, but never enter soundness/confidence signals or decide a verdict.
 PRESENTATION_SCOPE_CHECKS = frozenset({"cross-references", "manuscript-artifacts"})
 
 SCORE_SCALES = {
@@ -28,56 +23,6 @@ SCORE_SCALES = {
     "Overall recommendation": "1-6",
     "Confidence": "1-5",
 }
-
-
-def apply_scientific_scores(
-    deterministic_scores: Mapping[str, Mapping[str, Any]],
-    judgment: ScientificJudgment,
-    *,
-    integrity_breach: bool = False,
-    integrity_grounding: Iterable[str] = (),
-) -> dict[str, dict[str, Any]]:
-    """Copy all six validated direct scores, then enforce proven-integrity caps."""
-
-    if not isinstance(judgment, ScientificJudgment):
-        raise TypeError("judgment must be a validated ScientificJudgment")
-    final = {
-        dimension: dict(score)
-        for dimension, score in deterministic_scores.items()
-    }
-    for dimension, scale in SCORE_SCALES.items():
-        adjustment = judgment.scores[dimension]
-        grounding = (
-            (adjustment.grounding,)
-            if isinstance(adjustment.grounding, str)
-            else adjustment.grounding
-        )
-        citation = ", ".join(grounding)
-        rationale = " ".join(adjustment.reason.split())
-        if citation:
-            rationale = f"{rationale} Grounding: [{citation}]."
-        final[dimension] = {
-            "value": adjustment.value,
-            "scale": scale,
-            "rationale": rationale,
-        }
-
-    if integrity_breach:
-        anchors = tuple(
-            grounding_id
-            for grounding_id in integrity_grounding
-            if isinstance(grounding_id, str) and grounding_id.strip()
-        )
-        anchor_text = f" [{', '.join(anchors)}]" if anchors else ""
-        for dimension in ("Soundness", "Overall recommendation"):
-            score = final[dimension]
-            score["value"] = min(int(score["value"]), 2)
-            score["rationale"] = (
-                f"{score['rationale']} Deterministic integrity cap: a proven "
-                f"contradiction or dishonest self-certification limits "
-                f"{dimension} to at most 2{anchor_text}."
-            )
-    return final
 
 
 def normalize_overall(

@@ -17,7 +17,6 @@ from .citation_existence import check_citation_existence
 from .claims import extract_claims, label_verdicts
 from .composer import (
     SCORE_SCALES,
-    apply_scientific_scores,
     calibrate_scores,
     draft_comments,
     ground_comments,
@@ -26,11 +25,7 @@ from .document import PreparedPaper, SourceIdentity, prepare_paper
 from .injection_scan import check_injection_scan, scan_and_sanitize
 from .manuscript_integrity import check_cross_references, check_manuscript_artifacts
 from .mechanical_checks import check_arithmetic, check_internal_consistency, check_ledger_trace
-from .model_critique import (
-    committee_review as _committee_review,
-    compute_judgment_identity,
-    generate_search_queries,
-)
+from .model_critique import generate_search_queries
 from .judgment_review import (
     apply_integrity_caps,
     extract_paper_title,
@@ -43,9 +38,7 @@ from .novelty_positioning import check_novelty_positioning
 from .parser import parse_markdown
 from .positioning import check_positioning
 from .prose_hygiene import sanitize as _sanitize_prose
-from .review_schema import ScientificJudgment
 from .rigor_checklist import rigor_checklist_questions
-from .scientific_review import build_evidence_packet, validate_judgment
 from .scientific_scaffolding import rigor_questions
 from .self_review_audit import check_self_review_consistency
 from .template_compliance import check_template_compliance
@@ -104,12 +97,10 @@ class ReviewState:
     review_markdown: str = ""
     mode: str = "best"
     judgment: dict[str, Any] = field(default_factory=dict)
-    scientific_judgment: ScientificJudgment | None = None
     judgment_identity: str = ""
     judgment_error: str = ""
     committee_provenance: dict[str, Any] = field(default_factory=dict)
-    # Judgment-first review body (panel/area-chair markdown). When present it
-    # becomes the review output and the deterministic audit ships as a sidecar.
+    # Final review body from the panel; when set, the audit becomes a sidecar.
     review_document: str = ""
     # Full panel member reviews, rendered only into the audit sidecar.
     panel_reviews: list[dict[str, Any]] = field(default_factory=list)
@@ -456,12 +447,6 @@ def _format_source_identity(label: str, identity: SourceIdentity) -> str:
     )
 
 
-# Committee-authored weakness prose about typographic defects (broken \ref text
-# etc.) — recognized so it can never be promoted to the closing "next step".
-_TYPOGRAPHIC_REMARK_RE = re.compile(
-    r"(?i)\bcross-refer|\bgarbled\b|\btypograph|minor presentation remark"
-)
-
 CONTRIBUTION_RE = re.compile(
     r"\b(?:our\s+(?:main\s+|key\s+|primary\s+)?contribution|we\s+(?:propose|present|introduce|develop|"
     r"show|demonstrate)|in\s+this\s+(?:paper|work)|this\s+(?:paper|work)\s+(?:proposes|presents|introduces))\b",
@@ -491,40 +476,12 @@ def _contribution_sentence(claims: list[dict[str, Any]]) -> str:
     return ""
 
 
-def _grounding_ids(value: object) -> tuple[str, ...]:
-    if isinstance(value, str):
-        return (value,)
-    if isinstance(value, tuple):
-        return tuple(item for item in value if isinstance(item, str))
-    return ()
-
-
-def _scientific_comment_text(comment: object) -> str:
-    text = _sanitize_prose(
-        re.sub(r"\s+", " ", str(getattr(comment, "text", "")).strip())
-    )
-    grounding = ", ".join(_grounding_ids(getattr(comment, "grounding", ())))
-    return f"{text} [{grounding}]" if grounding else text
-
-
-def _scientific_question_text(question: object) -> str:
-    text = _scientific_comment_text(question)
-    assessment = _sanitize_prose(
-        re.sub(r"\s+", " ", str(getattr(question, "assessment_if_resolved", "")).strip())
-    )
-    return (
-        f"{text} Assessment if resolved: {assessment}"
-        if assessment
-        else text
-    )
-
-
 def _trace_scalar(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip().replace("`", "'")
 
 
 def _committee_trace(state: ReviewState) -> str:
-    """Render compact four-call provenance only when best mode attempted it."""
+    """Render compact panel provenance only when best mode attempted it."""
 
     provenance = state.committee_provenance
     if not provenance and not state.judgment_error and not state.judgment_identity:
@@ -532,41 +489,28 @@ def _committee_trace(state: ReviewState) -> str:
     lines: list[str] = []
     if state.judgment_identity:
         lines.append(f"- Scientific judgment identity: `{state.judgment_identity}`.")
-    committee_identity = provenance.get("committee_identity") if isinstance(provenance, dict) else None
-    if committee_identity and committee_identity != state.judgment_identity:
-        lines.append(f"- Scientific committee identity: `{committee_identity}`.")
     if isinstance(provenance, dict) and provenance:
-        rubric = _trace_scalar(provenance.get("rubric_version")) or "unknown"
-        workers = _trace_scalar(provenance.get("workers")) or "unknown"
-        timeout = _trace_scalar(provenance.get("timeout_seconds")) or "unknown"
         lines.append(
-            f"- Scientific committee configuration: rubric=`{rubric}`, "
-            f"workers={workers}, timeout={timeout}s."
+            f"- Review panel configuration: panel={_trace_scalar(provenance.get('panel')) or 'unknown'}, "
+            f"model=`{_trace_scalar(provenance.get('model')) or 'unknown'}`, "
+            f"synthesis={_trace_scalar(provenance.get('synthesis')) or 'unknown'}."
         )
-
-    calls: list[dict[str, Any]] = []
-    raw_specialists = provenance.get("specialists", []) if isinstance(provenance, dict) else []
-    if isinstance(raw_specialists, list):
-        calls.extend(call for call in raw_specialists if isinstance(call, dict))
-    raw_meta = provenance.get("meta") if isinstance(provenance, dict) else None
-    if isinstance(raw_meta, dict):
-        calls.append(raw_meta)
-    for call in calls:
-        role = _trace_scalar(call.get("role")) or "unknown"
-        model = _trace_scalar(call.get("model")) or "unknown"
-        prompt_hash = _trace_scalar(call.get("prompt_sha256")) or "unavailable"
-        response_hash = _trace_scalar(call.get("response_sha256")) or "unavailable"
-        status = "ok" if call.get("ok") else "failed"
-        error = _trace_scalar(call.get("error"))
-        suffix = f", error={error}" if error else ""
-        lines.append(
-            f"- Scientific committee `{role}`: model=`{model}`, "
-            f"prompt=`sha256:{prompt_hash}`, response=`sha256:{response_hash}`, "
-            f"status={status}{suffix}."
-        )
+        members = provenance.get("members", [])
+        for member in members if isinstance(members, list) else []:
+            if not isinstance(member, dict):
+                continue
+            prompt_hash = _trace_scalar(member.get("prompt_sha256")) or "unavailable"
+            response_hash = _trace_scalar(member.get("response_sha256")) or "unavailable"
+            error = _trace_scalar(member.get("error"))
+            suffix = f", error={error}" if error else ""
+            lines.append(
+                f"- Panel reviewer `{_trace_scalar(member.get('role')) or 'unknown'}`: "
+                f"prompt=`sha256:{prompt_hash}`, response=`sha256:{response_hash}`, "
+                f"status={'ok' if member.get('ok') else 'failed'}{suffix}."
+            )
     if state.judgment_error:
         lines.append(
-            "- Scientific committee fallback: deterministic review and scores "
+            "- Review panel fallback: deterministic review and scores "
             f"retained ({_trace_scalar(state.judgment_error)})."
         )
     return "\n".join(lines) + ("\n" if lines else "")
@@ -581,8 +525,12 @@ def _review_method_line(state: ReviewState) -> str:
     only from the deterministic mechanical audit.
     """
 
-    if state.scientific_judgment is not None:
-        return "- Review method: deterministic evidence audit + scientific committee."
+    if state.review_document:
+        return (
+            "- Review method: full review — deterministic evidence audit + review "
+            "panel. The panel's review is the official output; this document is "
+            "its audit sidecar."
+        )
     audit_note = (
         " Every score and comment below is from the deterministic mechanical checks; "
         "no scientific-committee judgment is included."
@@ -721,45 +669,29 @@ def _compose_review(state: ReviewState) -> str:
                 )}
             )
 
-    # Audit mode retains its established compact shaping. A successful committee
-    # prepends exactly its three-to-five scientific questions while retaining
-    # every deterministic comment; the latter remain separately traceable.
+    # Compact question shaping: identical evidence requests collapse into one
+    # summary question so the list stays specific.
     raw_questions = comments_by_section["Questions for the Authors"]
-    if state.scientific_judgment is None:
-        evidence_requests = [
-            item
-            for item in raw_questions
-            if "auditable evidence" in item.get("text", "")
-        ]
-        specific_questions = [
-            item
-            for item in raw_questions
-            if "auditable evidence" not in item.get("text", "")
-        ]
-        shaped_questions = specific_questions[: (4 if evidence_requests else 5)]
-        if evidence_requests:
-            shaped_questions.append(
-                {"text": (
-                    f"{len(evidence_requests)} extracted result/arithmetic claim(s) could not be checked "
-                    f"against the supplied evidence and are listed with their source lines in the Evidence "
-                    f"Trace — could the authors provide the underlying results?"
-                )}
-            )
-        comments_by_section["Questions for the Authors"] = shaped_questions
-    else:
-        scientific = state.scientific_judgment
-        comments_by_section["Strengths"] = [
-            {"text": _scientific_comment_text(comment)}
-            for comment in scientific.strengths
-        ] + comments_by_section["Strengths"]
-        comments_by_section["Weaknesses"] = [
-            {"text": _scientific_comment_text(comment)}
-            for comment in scientific.weaknesses
-        ] + comments_by_section["Weaknesses"]
-        comments_by_section["Questions for the Authors"] = [
-            {"text": _scientific_question_text(question)}
-            for question in scientific.questions
-        ]
+    evidence_requests = [
+        item
+        for item in raw_questions
+        if "auditable evidence" in item.get("text", "")
+    ]
+    specific_questions = [
+        item
+        for item in raw_questions
+        if "auditable evidence" not in item.get("text", "")
+    ]
+    shaped_questions = specific_questions[: (4 if evidence_requests else 5)]
+    if evidence_requests:
+        shaped_questions.append(
+            {"text": (
+                f"{len(evidence_requests)} extracted result/arithmetic claim(s) could not be checked "
+                f"against the supplied evidence and are listed with their source lines in the Evidence "
+                f"Trace — could the authors provide the underlying results?"
+            )}
+        )
+    comments_by_section["Questions for the Authors"] = shaped_questions
 
     # Minor presentation remarks (typographic findings) always trail substantive
     # weaknesses — they are one-line notes, not the case against the paper.
@@ -811,36 +743,23 @@ def _compose_review(state: ReviewState) -> str:
         lead = f'The paper, "{title}", presents a method and supporting experiments.'
     else:
         lead = "The paper presents a method and supporting experiments."
-    audit_stats = (
-        f"{label_counts['contradicted']} contradiction(s), {sr_dishonest} dishonest "
-        f"self-certification(s), {proven_issues} mechanical finding(s); "
-        f"{label_counts['supported']} result claim(s) evidence-backed, "
-        f"{label_counts['unverifiable']} unverifiable"
-    )
     audit_summary = (
-        f"Deterministic audit: {audit_stats}. "
+        f"Deterministic audit: {label_counts['contradicted']} contradiction(s), "
+        f"{sr_dishonest} dishonest self-certification(s), {proven_issues} mechanical "
+        f"finding(s); {label_counts['supported']} result claim(s) evidence-backed, "
+        f"{label_counts['unverifiable']} unverifiable. "
         f"Overall recommendation: {overall_value}/6 [{summary_anchor}]."
     )
-    if state.scientific_judgment is not None:
-        # With a scientific judgment present the Summary reads as a review. The
-        # audit tally is neutral process information — "no implemented check
-        # covers this claim" is not a defect count — so it lives in the Evidence
-        # Trace, not the Summary.
-        scientific_summary = _sanitize_prose(
-            re.sub(r"\s+", " ", state.scientific_judgment.summary.strip())
-        )
-        summary_text = f"{scientific_summary} Overall recommendation: {overall_value}/6."
-    else:
-        summary_text = (
-            f"{lead} It reports {len(result_claims)} quantitative result claim(s) and cites "
-            f"{citation_count} prior work(s). {audit_summary}"
-        )
+    summary_text = (
+        f"{lead} It reports {len(result_claims)} quantitative result claim(s) and cites "
+        f"{citation_count} prior work(s). {audit_summary}"
+    )
 
     # Legacy extension data can still render for embedders that directly assign
     # ``state.judgment``. Successful committees merge into the official sections
     # above and deliberately never create an isolated appendix.
     judgment_comments = state.judgment.get("comments") if isinstance(state.judgment, dict) else None
-    if judgment_comments and state.scientific_judgment is None:
+    if judgment_comments:
         rendered_judgment = "\n".join(f"- {str(item)}" for item in judgment_comments)
         provenance = ""
         if isinstance(state.judgment, dict) and state.judgment.get("model"):
@@ -856,13 +775,13 @@ def _compose_review(state: ReviewState) -> str:
         judgment_block = ""
 
     # Closing reviewer comment (ICML-style), deterministic and always present.
-    # The closing "most useful next step" must be a substantive scientific point:
-    # skip minor typographic remarks (flagged or committee-authored) outright.
+    # The closing "most useful next step" must be a substantive scientific
+    # point, never a minor typographic remark.
     first_weakness = next(
         (
             item["text"]
             for item in comments_by_section["Weaknesses"]
-            if not item.get("minor") and not _TYPOGRAPHIC_REMARK_RE.search(item["text"])
+            if not item.get("minor")
         ),
         None,
     )
@@ -877,22 +796,6 @@ def _compose_review(state: ReviewState) -> str:
             "Reviewer-directed concealed content was quarantined and reported "
             "in Ethics; it did not affect the scientific assessment."
         )
-    elif state.scientific_judgment is not None:
-        if isinstance(overall_value, int) and overall_value >= 5:
-            verdict_note = (
-                "The grounded scientific committee found the method, evidence, and "
-                "scope sufficiently strong for an accept recommendation."
-            )
-        elif isinstance(overall_value, int) and overall_value >= 4:
-            verdict_note = (
-                "The grounded scientific committee found a positive case, with the "
-                "listed weaknesses remaining material but not decisive."
-            )
-        else:
-            verdict_note = (
-                "The grounded scientific committee found that the listed scientific "
-                "weaknesses currently outweigh the paper's strengths."
-            )
     elif label_counts["supported"]:
         verdict_note = (
             "At least one headline result is mechanically supported; the open items concern "
@@ -919,11 +822,6 @@ def _compose_review(state: ReviewState) -> str:
     converter = state.converter or "none (Markdown source)"
     scientific_trace = _committee_trace(state)
     review_method = _review_method_line(state)
-    audit_trace_line = (
-        f"- Deterministic audit (neutral tally): {audit_stats}.\n"
-        if state.scientific_judgment is not None
-        else ""
-    )
     return f"""# ICML-Style Paper Review
 
 ## Paper and Evidence Identity
@@ -966,7 +864,7 @@ Paper text was treated only as data. The injection audit sanitized hidden HTML a
 ## Evidence Trace
 
 - Pipeline execution: `{stage_trace}`.
-{audit_trace_line}- Frozen review identity: `{state.review_identity}`.
+- Frozen review identity: `{state.review_identity}`.
 - Verdict labels digest: `{state.verdict_digest}`.
 - External citation snapshot digest: `{state.external_snapshot_digest}`.
 {scientific_trace}- Output path: `{_scrub_path(state.output_path)}`.
@@ -1004,177 +902,6 @@ def _judgment_enabled() -> bool:
     """
 
     return bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("REVIEWER_BEST_RETRIEVAL"))
-
-
-def _best_packet_chars() -> int:
-    try:
-        return max(8_000, int(os.environ.get("REVIEWER_BEST_MAX_CHARS", "60000")))
-    except (TypeError, ValueError):
-        return 60_000
-
-
-def _compact_finding(record: dict[str, Any], *, finding_id: str) -> dict[str, Any]:
-    location = record.get("location")
-    compact_location = dict(location) if isinstance(location, dict) else str(location or "")
-    return {
-        "id": finding_id,
-        "check": str(record.get("check", "")),
-        "location": compact_location,
-        "observed": str(record.get("observed", "")),
-        "expected": str(record.get("expected", "")),
-    }
-
-
-def _committee_inputs(
-    state: ReviewState,
-    paper_span_ids: list[str],
-    retrieval: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], dict[str, list[str]], bool, tuple[str, ...]]:
-    """Build compact deterministic data and stable non-paper grounding IDs."""
-
-    verdicts = {item["claim_id"]: item for item in state.verdicts}
-    all_contradicted_ids = [
-        claim["id"]
-        for claim in state.claims
-        if verdicts[claim["id"]].get("label") == "contradicted"
-    ]
-    all_supported_ids = [
-        claim["id"]
-        for claim in state.claims
-        if verdicts[claim["id"]].get("label") == "supported"
-    ]
-    ordered_claims = sorted(
-        state.claims,
-        key=lambda claim: (
-            0
-            if verdicts[claim["id"]].get("label") == "contradicted"
-            else 1
-            if verdicts[claim["id"]].get("label") == "supported"
-            else 2
-            if claim.get("type") in {"result", "arithmetic", "hypothesis"}
-            else 3,
-            str(claim["id"]),
-        ),
-    )
-    selected_claims = ordered_claims[:60]
-    claims: list[dict[str, Any]] = []
-    for claim in selected_claims:
-        verdict = verdicts[claim["id"]]
-        location = claim.get("location", {})
-        claims.append(
-            {
-                "id": claim["id"],
-                "type": str(claim.get("type", "")),
-                "text": str(claim.get("text", "")),
-                "line": location.get("line") if isinstance(location, dict) else None,
-                "verdict": verdict.get("label"),
-                "verdict_reason": str(verdict.get("reason", "")),
-                "evidence": list(verdict.get("evidence", [])),
-            }
-        )
-
-    # Injection findings may contain a matched fragment from hidden source text.
-    # They remain in the deterministic audit/review but never enter model prompts.
-    redacted_injection_findings = sum(
-        record.get("check") == "injection-scan"
-        for record in state.finding_records
-    )
-    findings = [
-        _compact_finding(record, finding_id=record["id"])
-        for record in state.finding_records
-        if record.get("check") != "injection-scan"
-    ]
-    self_review_ids: list[str] = []
-    for index, record in enumerate(
-        state.mechanical_checks.get("self-review-audit", {}).get("findings", []),
-        1,
-    ):
-        finding_id = f"self-review-finding-{index:03d}"
-        self_review_ids.append(finding_id)
-        findings.append(_compact_finding(record, finding_id=finding_id))
-    for index, record in enumerate(
-        state.mechanical_checks.get("positioning", {}).get("findings", []),
-        1,
-    ):
-        findings.append(
-            _compact_finding(
-                record,
-                finding_id=f"positioning-finding-{index:03d}",
-            )
-        )
-
-    selected_ids = {claim["id"] for claim in selected_claims}
-    contradicted_ids = [
-        claim_id for claim_id in all_contradicted_ids if claim_id in selected_ids
-    ]
-    supported_ids = [
-        claim_id for claim_id in all_supported_ids if claim_id in selected_ids
-    ]
-    finding_ids = [finding["id"] for finding in findings]
-    claim_ids = [claim["id"] for claim in claims]
-    retrieved_prior_work: list[dict[str, Any]] = []
-    arxiv_ids: list[str] = []
-    for trace in (retrieval or {}).get("traces", []):
-        if not isinstance(trace, dict):
-            continue
-        identifier = str(trace.get("id", "")).strip()
-        if not identifier:
-            continue
-        grounding_id = f"arxiv:{identifier}"
-        arxiv_ids.append(grounding_id)
-        retrieved_prior_work.append(
-            {
-                "id": grounding_id,
-                "title": str(trace.get("title", "")),
-                # The abstract is the actual "scientific evidence": it lets the
-                # committee compare the submission's method/claims against what this
-                # related work really did, not just its title. Bounded to keep the
-                # committee prompt within budget.
-                "abstract": " ".join(str(trace.get("summary", "")).split())[:600],
-                "published": str(trace.get("published", "")),
-                "temporal_relation": str(trace.get("temporal_relation", "unknown")),
-                "similarity": trace.get("similarity"),
-                "already_cited": bool(trace.get("already_cited")),
-                "mentioned_by_title": bool(trace.get("mentioned_by_title")),
-            }
-        )
-    # Injection findings stay redacted from model prompts and remain visible in
-    # the audit summary, but cannot cap scientific scores: all downstream analysis
-    # sees the sanitized twin, so scoring the hidden payload would violate the
-    # injection-invariance contract.
-    integrity_ids = tuple([*all_contradicted_ids, *self_review_ids])
-    audit = {
-        "audit_identity": state.review_identity,
-        "summary": {
-            "claim_count": len(state.claims),
-            "included_prioritized_claims": len(claims),
-            "omitted_lower_priority_claims": len(state.claims) - len(claims),
-            "supported_claims": len(all_supported_ids),
-            "contradicted_claims": len(all_contradicted_ids),
-            "deterministic_findings": len(findings),
-            "redacted_injection_findings": redacted_injection_findings,
-            "proven_integrity_breach": bool(integrity_ids),
-        },
-        "claims": claims,
-        "findings": findings,
-        "retrieved_prior_work": retrieved_prior_work,
-        "deterministic_scores": {
-            dimension: {
-                "value": score.get("value"),
-                "rationale": score.get("rationale"),
-            }
-            for dimension, score in state.scores.items()
-        },
-    }
-    grounding = {
-        "finding_ids": finding_ids,
-        "contradicted_claim_ids": contradicted_ids,
-        "supported_claim_ids": supported_ids,
-        "claim_ids": claim_ids,
-        "paper_span_ids": paper_span_ids,
-        "arxiv_ids": arxiv_ids,
-    }
-    return audit, grounding, bool(integrity_ids), integrity_ids
 
 
 def _apply_legacy_retrieval_layer(state: ReviewState) -> ReviewState:
@@ -1217,8 +944,12 @@ def _guardrail_annotations(state: ReviewState, retrieval: dict[str, Any]) -> dic
         ][:8]
 
     return {
+        # An injection finding's ``observed`` text embeds the raw hidden
+        # instruction; surfacing it here would feed the attack straight into the
+        # panel prompt. Report only that an attempt was detected and withheld —
+        # the count and location are safe, the content never is.
         "hidden_instruction_attempts": [
-            {"kind": item.get("kind"), "match": str(item.get("match", ""))[:200]}
+            {"location": item.get("location"), "content_redacted": True}
             for item in state.mechanical_checks.get("injection-scan", {}).get("findings", [])
         ],
         "citation_findings": _findings("citation-existence"),
@@ -1342,7 +1073,7 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
                 "value": value,
                 "scale": SCORE_SCALES[dimension],
                 "rationale": (
-                    "Judgment-first panel review; rationale in the review body's "
+                    "Adopted from the review panel; rationale in the review's "
                     "Scores section."
                 ),
             }
@@ -1357,7 +1088,6 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
         state.judgment_error = ""
         state.judgment = {}
     except Exception as error:  # noqa: BLE001 - one paper failure cannot escape
-        state.scientific_judgment = None
         state.judgment_identity = ""
         detail = re.sub(r"\s+", " ", str(error)).strip()
         state.judgment_error = (
@@ -1486,10 +1216,9 @@ class ReviewPipeline:
         audit_document = _compose_review(state)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if state.review_document:
-            # Judgment-first inversion: the review body is the panel/area-chair
-            # review (double-blind clean, no pipeline mechanics); the full
-            # deterministic audit plus panel provenance ships as a sidecar so
-            # every step stays traceable.
+            # The panel review is the official output; the deterministic audit
+            # plus panel provenance ships as a sidecar so every step stays
+            # traceable without mechanics leaking into the review itself.
             state.review_markdown = state.review_document
             output_path.with_suffix(".audit.md").write_text(
                 audit_document + _panel_appendix(state), encoding="utf-8"

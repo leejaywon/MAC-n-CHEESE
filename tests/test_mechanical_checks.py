@@ -146,6 +146,7 @@ The relative improvement is 7.14%.
                 "arithmetic",
                 "cross-references",
                 "manuscript-artifacts",
+                "promised-results",
                 "baseline-fairness",
                 "negative-evidence",
                 "citation-existence",

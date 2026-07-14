@@ -2,21 +2,21 @@
   <img src="docs/banner.png" alt="A committee of decapod-crowned academic reviewers auditing a manuscript" width="820">
 </p>
 
+<h1 align="center">
+  🏆 1st Place · Track 2 (Review Agent) — <a href="https://luma.com/hjuo7auc?tk=kAFE8k">Ralphthon @ ICML 2026 Auto-Research</a> — won $10,000 OpenAI credits
+</h1>
+
 <h1 align="center">MAC n CHEESE</h1>
 
-<p align="center">
+<h3 align="center">
   <em>Multi-Agent Committee 'n Checking &amp; Evaluating with Scientific Evidence</em>
-</p>
-
-<p align="center">
-  🏆 <strong>Winner · Track 2 (Review Agent)</strong> — Ralphthon @ ICML 2026 Auto-Research
-</p>
-
-<p align="center">
-  An evidence-bound, ICML-style reviewer for scientific papers.
-</p>
+</h3>
 
 ---
+
+<h4 align="center">
+  An evidence-bound, ICML-style reviewer for scientific papers.
+</h4>
 
 Give it a paper as a **PDF or Markdown** file — optionally with an evidence
 bundle of result files — and it emits a structured ICML-style review whose every
@@ -43,28 +43,6 @@ LLM reviewers are easy to fool and hard to trust, so the system is split in two:
   numbers/tables/claims are checked against: `experiments.jsonl` ledgers,
   CSV/JSON results, logs, appendix. Omit it to review the manuscript on its own;
   the checks that need no ledger still run.
-
-## Quick start
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-# Full review — deterministic audit + LLM committee (needs OPENAI_API_KEY + OPENAI_MODEL):
-python run_review.py path/to/paper.pdf --out review.md
-
-# ...against an evidence bundle:
-python run_review.py path/to/paper.pdf path/to/evidence_dir --out review.md
-
-# Deterministic only — offline, reproducible, no model calls or API cost:
-python run_review.py path/to/paper.pdf --out review.md --deterministic
-
-# Batch (parallel, one process per paper): papers/<name>.(pdf|md) -> reviews/<name>.review.md
-python review_batch.py papers/ --out-dir reviews/ --evidence-root evidence/
-```
-
-Copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `OPENAI_MODEL` for the
-committee. `--deterministic` never reads it and stays fully offline.
 
 ## How it works
 
@@ -102,6 +80,7 @@ the audit identity or its verdict labels.
   criticism against the paper and dropping anything it cannot ground.
   `REVIEWER_PANEL=1` runs a single reviewer and skips the area-chair agent.
   (`reviewer/judgment_review.py`, `reviewer/model_critique.py`)
+
 - **Guardrails on the committee** — a machine-checked title-echo gate rejects a
   review of the wrong paper; a **proven** integrity breach caps Soundness and
   Overall at 2. Any committee failure falls back, per paper, to the
@@ -121,6 +100,28 @@ recommendation (1–6), Confidence (1–5).
 
 With `--deterministic` there is no committee: `review.md` is the audit document
 itself.
+
+## Quick start
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# Full review — deterministic audit + LLM committee (needs OPENAI_API_KEY + OPENAI_MODEL):
+python run_review.py path/to/paper.pdf --out review.md
+
+# ...against an evidence bundle:
+python run_review.py path/to/paper.pdf path/to/evidence_dir --out review.md
+
+# Deterministic only — offline, reproducible, no model calls or API cost:
+python run_review.py path/to/paper.pdf --out review.md --deterministic
+
+# Batch (parallel, one process per paper): papers/<name>.(pdf|md) -> reviews/<name>.review.md
+python review_batch.py papers/ --out-dir reviews/ --evidence-root evidence/
+```
+
+Copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `OPENAI_MODEL` for the
+committee. `--deterministic` never reads it and stays fully offline.
 
 ## Fresh random-PDF smoke and replay
 

@@ -121,15 +121,16 @@ _IMAGE_OCR_BLOCK = re.compile(
 )
 
 
-# A margin line number is a bare 3-digit counter — one that stands alone between
-# whitespace. Requiring whitespace on both sides is what protects real glued tokens
-# (``H100``, ``CIFAR-100``, ``EXPT-001``): those never lose their number. The band
-# is found by the counters' one defining property — a long run of *consecutive*
-# integers — over the *set* of values present, so it is immune to the out-of-order
-# way pymupdf emits page regions (the earlier sequential walk stopped at the first
-# reorder and missed most counters). Zero-padded to three digits, so 4-digit years
-# and decimals are never candidates.
-_MARGIN_COUNTER = re.compile(r"(?<!\S)\d{3}(?!\S)")
+# Detect the line-number band over ALL 3-digit tokens — including a counter a line
+# break fused to a word ("AI023") — so a glued counter cannot fragment the
+# consecutive run and drop its standalone neighbours below the threshold. Removal
+# then touches only the *whitespace-delimited* counters, leaving glued digits in
+# place; that is what protects real identifiers whose value can fall inside the band
+# (``H100``, ``CIFAR-100``, ``EXPT-001``). Detection is over the *set* of present
+# values, so it is immune to the out-of-order way pymupdf emits page regions.
+# Zero-padded to three digits, so 4-digit years and decimals are never candidates.
+_MARGIN_ANY = re.compile(r"(?<![\d.])\d{3}(?![\d.])")
+_MARGIN_STANDALONE = re.compile(r"(?<!\S)\d{3}(?!\S)")
 _MARGIN_MIN_RUN = 6  # a value is a counter only inside a consecutive run this long
 _MARGIN_MIN_TOTAL = 30  # ...and the doc must carry this many to count as line-numbered
 
@@ -138,17 +139,17 @@ def _strip_margin_line_numbers(markdown: str) -> str:
     """Remove ICML/NeurIPS margin line numbers that extraction inlines.
 
     Submission PDFs number every line; pymupdf emits those counters into the prose
-    as standalone integers ("000 001 002 ... 384") that poison numeric/claim
-    extraction. A counter is removed only when its value belongs to a run of at
-    least ``_MARGIN_MIN_RUN`` consecutive present values and the document carries at
-    least ``_MARGIN_MIN_TOTAL`` of them; real numbers (512 units, 53%) sit outside
-    the run and are kept, and a counter fused into a word by a line break
-    ("low205 pressure") is deliberately left alone — stripping word-glued digits
-    would eat legitimate names like ``H100``. No-op on any non-line-numbered doc.
+    ("000 001 002 ... 384"), which poisons numeric/claim extraction. The band is
+    found from every 3-digit token whose value belongs to a run of at least
+    ``_MARGIN_MIN_RUN`` consecutive present values (the document must carry at least
+    ``_MARGIN_MIN_TOTAL`` of them). Only whitespace-delimited counters in that band
+    are removed: real numbers (512 units, 53%) sit outside the run and are kept, and
+    a counter fused into a word by a line break ("low205 pressure", "AI023") is left
+    alone — stripping word-glued digits would eat legitimate names like ``H100``.
+    No-op on any non-line-numbered document.
     """
 
-    matches = list(_MARGIN_COUNTER.finditer(markdown))
-    present = {int(match.group()) for match in matches}
+    present = {int(match.group()) for match in _MARGIN_ANY.finditer(markdown)}
     line_numbers: set[int] = set()
     for value in present:
         if value - 1 in present:
@@ -162,7 +163,7 @@ def _strip_margin_line_numbers(markdown: str) -> str:
         return markdown  # not a densely line-numbered document
     out: list[str] = []
     cursor = 0
-    for match in matches:
+    for match in _MARGIN_STANDALONE.finditer(markdown):
         if int(match.group()) in line_numbers:
             out.append(markdown[cursor : match.start()])
             cursor = match.end()

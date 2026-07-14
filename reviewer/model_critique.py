@@ -79,7 +79,15 @@ SYSTEM_PROMPT = (
 )
 
 
-def _default_client(base_url: str, api_key: str, model: str, max_tokens: int, timeout: int) -> Client:
+def _default_client(
+    base_url: str,
+    api_key: str,
+    model: str,
+    max_tokens: int,
+    timeout: int,
+    *,
+    json_mode: bool = True,
+) -> Client:
     def call(messages: list[dict[str, str]]) -> str:
         params: dict[str, object] = {
             "model": model,
@@ -87,8 +95,11 @@ def _default_client(base_url: str, api_key: str, model: str, max_tokens: int, ti
             "temperature": 0,
             "seed": 7,
             "max_tokens": max_tokens,
-            "response_format": {"type": "json_object"},
         }
+        if json_mode:
+            # Committee-era JSON contracts; the judgment-first reviewer emits
+            # Markdown and must NOT be forced into a JSON object.
+            params["response_format"] = {"type": "json_object"}
         effort = os.environ.get("REVIEWER_COMMITTEE_EFFORT", "").strip().lower()
         if effort:
             # Reasoning models (e.g. gpt-5.x) honor this; a model that rejects it

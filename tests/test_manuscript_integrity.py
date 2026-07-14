@@ -29,13 +29,17 @@ class CrossReferenceTests(unittest.TestCase):
             1,
         )
 
-    def test_garbled_eaten_backslash_refs(self) -> None:
-        # "\ref{tab:main}" -> "eftab:main", "\rightarrow" -> "ightarrow".
+    def test_garbled_ref_flagged(self) -> None:
+        # "\ref{tab:main}" -> "eftab:main": a cross-reference that never resolved.
         self.assertEqual(
             len(check_cross_references(_paper("As shown in Table eftab:main."))["findings"]), 1
         )
+
+    def test_extraction_artifact_arrow_not_flagged(self) -> None:
+        # "\rightarrow" -> "ightarrow" is a pymupdf extraction artifact, not an
+        # author defect, so it is deliberately not flagged as a manuscript problem.
         self.assertEqual(
-            len(check_cross_references(_paper("The score moves 0.71 ightarrow 0.77."))["findings"]), 1
+            len(check_cross_references(_paper("The score moves 0.71 ightarrow 0.77."))["findings"]), 0
         )
 
     def test_clean_references_pass(self) -> None:

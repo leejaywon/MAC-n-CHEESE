@@ -5,7 +5,6 @@ __pycache__/
 .venv
 .venv/
 
-# Secrets — never commit real keys
 .env
 .env.local
 .env.*.local
@@ -16,6 +15,9 @@ eval/random_pdf_runs/
 
 # Archived Ralphthon-era run artifacts (kept locally, out of git)
 /archive/
+
+# Redesign A/B-eval scratch artifacts (kept locally, out of git)
+scratch_eval/
 
 # Editor / IDE
 .vscode/

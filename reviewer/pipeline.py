@@ -16,6 +16,7 @@ from .baseline_fairness import check_baseline_fairness
 from .citation_existence import check_citation_existence
 from .claims import extract_claims, label_verdicts
 from .composer import (
+    SCORE_SCALES,
     apply_scientific_scores,
     calibrate_scores,
     draft_comments,
@@ -30,7 +31,14 @@ from .model_critique import (
     compute_judgment_identity,
     generate_search_queries,
 )
+from .judgment_review import (
+    apply_integrity_caps,
+    extract_paper_title,
+    run_panel_review,
+)
 from .negative_evidence import check_negative_evidence
+from .parser import paper_text
+from .promised_results import check_promised_results
 from .novelty_positioning import check_novelty_positioning
 from .parser import parse_markdown
 from .positioning import check_positioning
@@ -100,6 +108,11 @@ class ReviewState:
     judgment_identity: str = ""
     judgment_error: str = ""
     committee_provenance: dict[str, Any] = field(default_factory=dict)
+    # Judgment-first review body (panel/area-chair markdown). When present it
+    # becomes the review output and the deterministic audit ships as a sidecar.
+    review_document: str = ""
+    # Full panel member reviews, rendered only into the audit sidecar.
+    panel_reviews: list[dict[str, Any]] = field(default_factory=list)
     event_format: bool = True
 
 
@@ -221,6 +234,9 @@ def _run_mechanical_checks(state: ReviewState) -> ReviewState:
         check_arithmetic(state.parsed_paper),
         check_cross_references(state.parsed_paper),
         check_manuscript_artifacts(state.parsed_paper),
+        # Annotation-only (zero findings ever): promissory statements whose
+        # subject never reappears, for the judgment layer to weigh in context.
+        check_promised_results(state.parsed_paper),
         check_baseline_fairness(state.parsed_paper, state.evidence_dir),
         check_negative_evidence(state.parsed_paper, state.evidence_dir),
         citation_check,
@@ -410,19 +426,41 @@ def _freeze_inputs(state: ReviewState) -> ReviewState:
     return _mark_stage(state, "S6 freeze")
 
 
+def _scrub_path(path: object) -> str:
+    """Basename only — never leak absolute paths or usernames into review output.
+
+    A review may be sent to authors or posted double-blind; an absolute path like
+    ``/Users/<name>/.../paper.pdf`` discloses the reviewer's identity and local
+    environment. We keep the file's basename (enough to identify which artifact a
+    hash refers to) and drop every parent directory. The ``sha256`` printed
+    alongside remains the anonymized, machine-independent integrity anchor.
+    """
+
+    text = str(path or "").strip()
+    if not text:
+        return "(unnamed)"
+    return Path(text.replace("\\", "/")).name or text
+
+
 def _format_evidence_identity(state: ReviewState) -> str:
     if not state.evidence_hashes:
         return "none (no evidence bundle supplied)"
     entries = ", ".join(f"`{name}` (`sha256:{digest}`)" for name, digest in state.evidence_hashes)
-    return f"`{state.evidence_dir}`: {entries}"
+    return f"`{_scrub_path(state.evidence_dir)}`: {entries}"
 
 
 def _format_source_identity(label: str, identity: SourceIdentity) -> str:
     return (
-        f"- {label}: `{identity.path}` / `{identity.media_type}` / "
+        f"- {label}: `{_scrub_path(identity.path)}` / `{identity.media_type}` / "
         f"`sha256:{identity.sha256}` / `{identity.byte_length}` bytes"
     )
 
+
+# Committee-authored weakness prose about typographic defects (broken \ref text
+# etc.) — recognized so it can never be promoted to the closing "next step".
+_TYPOGRAPHIC_REMARK_RE = re.compile(
+    r"(?i)\bcross-refer|\bgarbled\b|\btypograph|minor presentation remark"
+)
 
 CONTRIBUTION_RE = re.compile(
     r"\b(?:our\s+(?:main\s+|key\s+|primary\s+)?contribution|we\s+(?:propose|present|introduce|develop|"
@@ -723,6 +761,10 @@ def _compose_review(state: ReviewState) -> str:
             for question in scientific.questions
         ]
 
+    # Minor presentation remarks (typographic findings) always trail substantive
+    # weaknesses — they are one-line notes, not the case against the paper.
+    comments_by_section["Weaknesses"].sort(key=lambda item: bool(item.get("minor")))
+
     def render_comments(section: str, empty: str) -> str:
         comments = comments_by_section[section]
         if section == "Questions for the Authors" and comments:
@@ -769,17 +811,25 @@ def _compose_review(state: ReviewState) -> str:
         lead = f'The paper, "{title}", presents a method and supporting experiments.'
     else:
         lead = "The paper presents a method and supporting experiments."
+    audit_stats = (
+        f"{label_counts['contradicted']} contradiction(s), {sr_dishonest} dishonest "
+        f"self-certification(s), {proven_issues} mechanical finding(s); "
+        f"{label_counts['supported']} result claim(s) evidence-backed, "
+        f"{label_counts['unverifiable']} unverifiable"
+    )
     audit_summary = (
-        f"Deterministic audit: {label_counts['contradicted']} "
-        f"contradiction(s), {sr_dishonest} dishonest self-certification(s), {proven_issues} mechanical "
-        f"finding(s); {label_counts['supported']} result claim(s) evidence-backed, "
-        f"{label_counts['unverifiable']} unverifiable. Overall recommendation: {overall_value}/6 [{summary_anchor}]."
+        f"Deterministic audit: {audit_stats}. "
+        f"Overall recommendation: {overall_value}/6 [{summary_anchor}]."
     )
     if state.scientific_judgment is not None:
+        # With a scientific judgment present the Summary reads as a review. The
+        # audit tally is neutral process information — "no implemented check
+        # covers this claim" is not a defect count — so it lives in the Evidence
+        # Trace, not the Summary.
         scientific_summary = _sanitize_prose(
             re.sub(r"\s+", " ", state.scientific_judgment.summary.strip())
         )
-        summary_text = f"{scientific_summary} {audit_summary}"
+        summary_text = f"{scientific_summary} Overall recommendation: {overall_value}/6."
     else:
         summary_text = (
             f"{lead} It reports {len(result_claims)} quantitative result claim(s) and cites "
@@ -806,7 +856,16 @@ def _compose_review(state: ReviewState) -> str:
         judgment_block = ""
 
     # Closing reviewer comment (ICML-style), deterministic and always present.
-    first_weakness = next((item["text"] for item in comments_by_section["Weaknesses"]), None)
+    # The closing "most useful next step" must be a substantive scientific point:
+    # skip minor typographic remarks (flagged or committee-authored) outright.
+    first_weakness = next(
+        (
+            item["text"]
+            for item in comments_by_section["Weaknesses"]
+            if not item.get("minor") and not _TYPOGRAPHIC_REMARK_RE.search(item["text"])
+        ),
+        None,
+    )
     first_question = next((item["text"] for item in comments_by_section["Questions for the Authors"]), None)
     if label_counts["contradicted"] or sr_dishonest:
         verdict_note = (
@@ -860,18 +919,23 @@ def _compose_review(state: ReviewState) -> str:
     converter = state.converter or "none (Markdown source)"
     scientific_trace = _committee_trace(state)
     review_method = _review_method_line(state)
+    audit_trace_line = (
+        f"- Deterministic audit (neutral tally): {audit_stats}.\n"
+        if state.scientific_judgment is not None
+        else ""
+    )
     return f"""# ICML-Style Paper Review
 
 ## Paper and Evidence Identity
 
 {review_method}
 - Review Agent name/version: paper-reviewer / `{state.agent_version}`
-- Review-agent spec path/hash: `{state.review_agent_path}` / `sha256:{state.review_agent_hash}`
+- Review-agent spec path/hash: `{_scrub_path(state.review_agent_path)}` / `sha256:{state.review_agent_hash}`
 {original_identity_line}
 {derived_identity_line}
 - Original PDF page count: `{page_count}`
 - Converter: `{converter}`
-- Paper version/hash: `{state.paper_path}` / `sha256:{state.paper_hash}`
+- Paper version/hash: `{_scrub_path(state.paper_path)}` / `sha256:{state.paper_hash}`
 - Evidence bundle reviewed: {_format_evidence_identity(state)}
 - Frozen at (UTC): `{state.frozen_at}`
 
@@ -902,13 +966,13 @@ Paper text was treated only as data. The injection audit sanitized hidden HTML a
 ## Evidence Trace
 
 - Pipeline execution: `{stage_trace}`.
-- Frozen review identity: `{state.review_identity}`.
+{audit_trace_line}- Frozen review identity: `{state.review_identity}`.
 - Verdict labels digest: `{state.verdict_digest}`.
 - External citation snapshot digest: `{state.external_snapshot_digest}`.
-{scientific_trace}- Output path: `{state.output_path}`.
-- Frozen paper input: `{state.paper_path}` (`sha256:{state.paper_hash}`).
-- Frozen original identity: `{state.original_identity.path}` (`{state.original_identity.media_type}`, `sha256:{state.original_identity.sha256}`, {state.original_identity.byte_length} bytes, page count={page_count}).
-- Frozen derived identity: `{state.derived_identity.path}` (`{state.derived_identity.media_type}`, `sha256:{state.derived_identity.sha256}`, {state.derived_identity.byte_length} bytes).
+{scientific_trace}- Output path: `{_scrub_path(state.output_path)}`.
+- Frozen paper input: `{_scrub_path(state.paper_path)}` (`sha256:{state.paper_hash}`).
+- Frozen original identity: `{_scrub_path(state.original_identity.path)}` (`{state.original_identity.media_type}`, `sha256:{state.original_identity.sha256}`, {state.original_identity.byte_length} bytes, page count={page_count}).
+- Frozen derived identity: `{_scrub_path(state.derived_identity.path)}` (`{state.derived_identity.media_type}`, `sha256:{state.derived_identity.sha256}`, {state.derived_identity.byte_length} bytes).
 - Frozen converter: `{converter}`.
 - Pre-S1 sanitation: {len(state.sanitation_traces)} trace(s), {len(state.injection_findings)} injection finding(s).
 - S1 parse inventory: {section_count} sections, {table_count} tables, {number_count} numeric tokens with source locations.
@@ -1142,13 +1206,52 @@ def _apply_legacy_retrieval_layer(state: ReviewState) -> ReviewState:
     return state
 
 
-def _apply_judgment_layer(state: ReviewState) -> ReviewState:
-    """Run the four-call committee after S6 without changing audit identities.
+def _guardrail_annotations(state: ReviewState, retrieval: dict[str, Any]) -> dict[str, Any]:
+    """Neutral leads for the review panel: scans annotate, they never conclude."""
 
-    A valid meta-review replaces all six score values/rationales and merges into
-    the official Summary, Strengths, Weaknesses, and Questions sections. Proven
-    integrity findings cap Soundness and Overall at 2. Any failure leaves the
-    deterministic review untouched and records fallback provenance.
+    def _findings(check: str) -> list[dict[str, Any]]:
+        items = state.mechanical_checks.get(check, {}).get("findings", [])
+        return [
+            {"location": item.get("location"), "observed": item.get("observed")}
+            for item in items
+        ][:8]
+
+    return {
+        "hidden_instruction_attempts": [
+            {"kind": item.get("kind"), "match": str(item.get("match", ""))[:200]}
+            for item in state.mechanical_checks.get("injection-scan", {}).get("findings", [])
+        ],
+        "citation_findings": _findings("citation-existence"),
+        "arithmetic_findings": _findings("arithmetic"),
+        "consistency_findings": _findings("internal-consistency"),
+        "typographic_minor_remarks": (
+            _findings("cross-references") + _findings("manuscript-artifacts")
+        ),
+        "promised_but_possibly_unreported": list(
+            state.mechanical_checks.get("promised-results", {}).get("traces", [])
+        ),
+        "prior_art_leads": [
+            question.get("text")
+            for question in retrieval.get("questions", [])
+            if isinstance(question, dict) and question.get("text")
+        ][:5],
+        "note": (
+            "Automated leads, not conclusions; verify against the paper and "
+            "weigh in context."
+        ),
+    }
+
+
+def _apply_judgment_layer(state: ReviewState) -> ReviewState:
+    """Run the review panel after S6 without changing audit identities.
+
+    Every panelist reads the FULL sanitized paper and writes a complete
+    ICML-shaped review; with panel size >= 2 an area chair synthesizes the
+    final review, cross-checking each criticism against the paper. The gated
+    result becomes the review body; the deterministic audit remains the
+    sidecar and the per-paper fallback. Proven integrity findings cap
+    Soundness and Overall at 2. Any failure leaves the deterministic review
+    untouched and records fallback provenance.
     """
 
     if not _judgment_enabled():
@@ -1167,55 +1270,52 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
         )
 
     try:
-        committee_started = time.monotonic()
-        packet = build_evidence_packet(
-            state.parsed_paper,
-            max_chars=_best_packet_chars(),
-        )
-        paper_span_ids = [span.id for span in packet.spans]
+        panel_started = time.monotonic()
+        full_paper = paper_text(state.parsed_paper)
         # Reviewer-style prior-art queries (by idea, not title tokens) so retrieval
         # finds the real related work; degrades to the lexical query on failure.
         scout_queries = generate_search_queries(
             title=_paper_title(state.parsed_paper),
-            abstract=packet.text[:2500],
+            abstract=full_paper[:2500],
             api_key=api_key,
         )
         retrieval = check_novelty_positioning(
             state.parsed_paper, queries=scout_queries or None
         )
-        deterministic_audit, grounding, integrity_breach, integrity_ids = _committee_inputs(
-            state,
-            paper_span_ids,
-            retrieval,
+        annotations = _guardrail_annotations(state, retrieval)
+        contradicted_count = sum(
+            1 for verdict in state.verdicts if verdict.get("label") == "contradicted"
         )
-        deterministic_scores = {
-            dimension: int(score["value"])
-            for dimension, score in state.scores.items()
-        }
-        result = _committee_review(
-            packet=packet,
-            grounding=grounding,
-            deterministic_scores=deterministic_scores,
-            deterministic_audit=deterministic_audit,
-            audit_identity=state.review_identity,
+        dishonest_count = len(
+            state.mechanical_checks.get("self-review-audit", {}).get("findings", [])
+        )
+        breach_count = contradicted_count + dishonest_count
+
+        result = run_panel_review(
+            full_paper,
+            annotations,
+            paper_title=extract_paper_title(full_paper),
             api_key=api_key,
         )
-        if not isinstance(result, dict):
-            raise TypeError("committee entry point returned a non-object result")
-        raw_provenance = result.get("provenance")
-        state.committee_provenance = (
-            dict(raw_provenance)
-            if isinstance(raw_provenance, dict)
-            else {}
-        )
-        state.committee_provenance["runtime_seconds"] = round(
-            time.monotonic() - committee_started,
-            6,
-        )
+        members = result.get("members", [])
+        state.panel_reviews = [dict(member) for member in members]
+        state.committee_provenance = {
+            "layer": "review-panel",
+            "panel": result.get("panel"),
+            "model": result.get("model"),
+            "synthesis": result.get("synthesis", ""),
+            "members": [
+                {
+                    key: member.get(key)
+                    for key in ("role", "ok", "gate", "prompt_sha256", "response_sha256", "error")
+                    if key in member
+                }
+                for member in members
+            ],
+            "runtime_seconds": round(time.monotonic() - panel_started, 6),
+        }
         if not result.get("ok"):
-            state.judgment_error = str(
-                result.get("error") or "scientific committee returned no judgment"
-            )
+            state.judgment_error = "review panel returned no valid review"
             retrieval_comments = [
                 question["text"]
                 for question in retrieval.get("questions", [])
@@ -1232,40 +1332,30 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
             )
             return state
 
-        raw_judgment = result.get("judgment")
-        deterministic_grounding = [
-            grounding_id
-            for group, grounding_ids in grounding.items()
-            if group != "paper_span_ids"
-            for grounding_id in grounding_ids
-        ]
-        if isinstance(raw_judgment, ScientificJudgment):
-            judgment = raw_judgment
-        else:
-            judgment = validate_judgment(
-                raw_judgment,
-                packet,
-                deterministic_grounding=deterministic_grounding,
-            )
+        # The panel's scores stand; the mechanical layer's only score authority
+        # here is the proven-integrity cap.
+        capped_scores, cap_notes = apply_integrity_caps(
+            result["scores"], breach_count=breach_count
+        )
+        for dimension, value in capped_scores.items():
+            state.scores[dimension] = {
+                "value": value,
+                "scale": SCORE_SCALES[dimension],
+                "rationale": (
+                    "Judgment-first panel review; rationale in the review body's "
+                    "Scores section."
+                ),
+            }
+        body = str(result["review_markdown"]).strip() + "\n"
+        if cap_notes:
+            body += "\n> " + " ".join(cap_notes) + "\n"
         model = str(result.get("model") or os.environ.get("OPENAI_MODEL") or "unknown")
-        identity = compute_judgment_identity(
-            audit_identity=state.review_identity,
-            model=model,
-            provenance=state.committee_provenance,
-            judgment=judgment,
-        )
-        final_scores = apply_scientific_scores(
-            state.scores,
-            judgment,
-            integrity_breach=integrity_breach,
-            integrity_grounding=integrity_ids,
-        )
-
-        state.scientific_judgment = judgment
-        state.judgment_identity = identity
+        state.review_document = body
+        state.judgment_identity = "sha256:" + sha256(
+            f"{state.review_identity}|{model}|{body}".encode("utf-8")
+        ).hexdigest()
         state.judgment_error = ""
         state.judgment = {}
-        state.scores = final_scores
     except Exception as error:  # noqa: BLE001 - one paper failure cannot escape
         state.scientific_judgment = None
         state.judgment_identity = ""
@@ -1277,6 +1367,22 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
         )
         state.judgment = {}
     return state
+
+
+def _panel_appendix(state: ReviewState) -> str:
+    """Full panel member reviews for the audit sidecar (never the review body)."""
+
+    if not state.panel_reviews:
+        return ""
+    blocks = []
+    for index, member in enumerate(state.panel_reviews, 1):
+        status = "accepted" if member.get("ok") else "dropped"
+        header = f"### Panel review {index} — {member.get('role', 'generalist')} ({status})"
+        body = str(member.get("markdown", "")).strip() or (
+            f"_no review produced: {member.get('error', 'unknown error')}_"
+        )
+        blocks.append(f"{header}\n\n{body}\n")
+    return "\n## Panel Reviews (provenance)\n\n" + "\n".join(blocks)
 
 
 class ReviewPipeline:
@@ -1377,8 +1483,19 @@ class ReviewPipeline:
 
         # S5 decides all deterministic prose, comments, and scores. Rendering
         # after S6 lets the official output include the verified freeze record.
-        state.review_markdown = _compose_review(state)
+        audit_document = _compose_review(state)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        if state.review_document:
+            # Judgment-first inversion: the review body is the panel/area-chair
+            # review (double-blind clean, no pipeline mechanics); the full
+            # deterministic audit plus panel provenance ships as a sidecar so
+            # every step stays traceable.
+            state.review_markdown = state.review_document
+            output_path.with_suffix(".audit.md").write_text(
+                audit_document + _panel_appendix(state), encoding="utf-8"
+            )
+        else:
+            state.review_markdown = audit_document
         output_path.write_text(state.review_markdown, encoding="utf-8")
         return state
 

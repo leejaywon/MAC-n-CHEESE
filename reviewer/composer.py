@@ -15,6 +15,11 @@ from typing import Any, Iterable, Mapping
 from .review_schema import ScientificJudgment
 
 
+# Checks whose findings are typographic/presentation remarks (broken \ref text, leftover TODO/AUTHORERR).
+# They may cap Presentation and appear as one minor remark,
+# but are excluded from soundness/confidence signals and from the closing "most useful next step" — a LaTeX typo must never decide a verdict.
+PRESENTATION_SCOPE_CHECKS = frozenset({"cross-references", "manuscript-artifacts"})
+
 SCORE_SCALES = {
     "Soundness": "1-4",
     "Presentation": "1-4",
@@ -121,11 +126,10 @@ def draft_comments(
                 }
             )
         elif label == "contradicted":
-            # A contradicted claim is contradicted BY a specific finding at its
-            # line, and that finding is rendered below with its full expected/
-            # observed detail. A separate opaque "conflicts with evidence" line
-            # would just duplicate it, so skip it here (the claim->finding link
-            # is preserved in the Evidence Trace).
+            # A contradicted claim is contradicted BY a specific finding at its line, 
+            # and that finding is rendered below with its full expected/observed detail.
+            # A separate opaque "conflicts with evidence" line would just duplicate it,
+            # so skip it here (the claim->finding link is preserved in the Evidence Trace).
             continue
         elif claim.get("type") in {"result", "arithmetic", "hypothesis"}:
             # Only substantive unverifiable claims (results, arithmetic,
@@ -146,16 +150,23 @@ def draft_comments(
     # Findings are also drafted independently so a contradiction remains
     # visible even when claim extraction changes around a malformed passage.
     for finding in findings:
+        minor = finding.get("check") in PRESENTATION_SCOPE_CHECKS
+        text = (
+            f"Minor presentation remark: {finding['observed']} [{finding['id']}]."
+            if minor
+            else (
+                f"The {finding['check']} check observed {finding['observed']}; "
+                f"expected {finding['expected']} [{finding['id']}]."
+            )
+        )
         comments.append(
             {
                 "section": "Weaknesses",
                 "stance": "criticism",
-                "text": (
-                    f"The {finding['check']} check observed {finding['observed']}; "
-                    f"expected {finding['expected']} [{finding['id']}]."
-                ),
+                "text": text,
                 "claim_id": None,
                 "references": [finding["id"]],
+                "minor": minor,
             }
         )
     return comments
@@ -256,8 +267,19 @@ def calibrate_scores(
     signals = (positioning or {}).get("signals", {})
     positioned = bool(signals.get("positioned"))
     situated_novelty = positioned and signals.get("novelty_claim_count", 0) > 0
+    # Typographic defects (broken cross-references, leftover build artifacts) are
+    # presentation remarks, never scientific evidence: they must not break the
+    # clean-run signal for Soundness, must not count as "mechanically grounded"
+    # certainty for Confidence, and must never drive the Overall verdict. A human
+    # reviewer notes them in one line and moves on.
     scientific_findings = [
-        finding for finding in (findings or []) if finding.get("check") != "injection-scan"
+        finding
+        for finding in (findings or [])
+        if finding.get("check") not in PRESENTATION_SCOPE_CHECKS
+        and finding.get("check") != "injection-scan"
+    ]
+    presentation_defects = [
+        finding for finding in (findings or []) if finding.get("check") in PRESENTATION_SCOPE_CHECKS
     ]
     clean_run = not scientific_findings  # zero proven scientific findings
     has_results = any(claim.get("type") in {"result", "arithmetic"} for claim in claims)
@@ -309,6 +331,15 @@ def calibrate_scores(
         presentation_reason = (
             f"The structural template audit found no proven violation, but structure alone does not "
             f"establish clear presentation [{anchor}]."
+        )
+    if presentation_defects and not template_findings:
+        # Cap-and-note only: typographic defects bound Presentation from above but
+        # never sink it to a verdict-driving low, and they touch no other score.
+        presentation = min(presentation, 3)
+        presentation_reason += (
+            f" Minor typographic defect(s) noted ({len(presentation_defects)}: e.g. "
+            f"{presentation_defects[0]['observed']}) [{presentation_defects[0]['id']}]; "
+            f"presentation remark only, not a verdict driver."
         )
     positioning_findings = (positioning or {}).get("findings", [])
     overclaim = next(

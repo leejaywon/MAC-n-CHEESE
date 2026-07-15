@@ -281,6 +281,11 @@ def run_panel_review(
         cycle = list(PANEL_EMPHASES)
         roles = [cycle[index % len(cycle)] for index in range(panel_size)]
 
+    def _progress(message: str) -> None:
+        if os.environ.get("REVIEWER_PROGRESS") != "1":
+            return
+        print(message, flush=True)
+
     def _one(role: str | None) -> dict[str, Any]:
         member: dict[str, Any] = {"role": role or "generalist", "ok": False}
         try:
@@ -304,8 +309,16 @@ def run_panel_review(
             member["error"] = f"{type(error).__name__}: {error}"
         return member
 
+    _progress(f"[committee] calling {panel_size} reviewer(s)...")
     with ThreadPoolExecutor(max_workers=min(panel_size, 4)) as pool:
         members = list(pool.map(_one, roles))
+    for member in members:
+        role = member.get("role") or "generalist"
+        if member.get("ok"):
+            _progress(f"[committee] {role} finished")
+        else:
+            detail = member.get("error") or "rejected by gate/parse"
+            _progress(f"[committee] {role} dropped ({detail})")
     survivors = [member for member in members if member["ok"]]
     if not survivors:
         return {"ok": False, "members": members, "model": model, "panel": panel_size}
@@ -324,6 +337,7 @@ def run_panel_review(
         return result
 
     try:
+        _progress("[committee] area chair writing final review...")
         ac_messages = build_area_chair_messages(
             paper_markdown, [member["markdown"] for member in survivors], annotations
         )
@@ -332,6 +346,7 @@ def run_panel_review(
         ac_gate = check_review_target(ac_parsed["title"], paper_title)
         score_gaps = [item for item in ac_parsed["missing"] if item.startswith("score:")]
         if ac_gate["ok"] and not score_gaps:
+            _progress("[committee] area chair finished")
             result.update(
                 review_markdown=ac_raw,
                 scores=ac_parsed["scores"],
@@ -339,8 +354,10 @@ def run_panel_review(
                 ac_gate=ac_gate,
             )
             return result
+        _progress("[committee] area chair dropped; using panel median")
     except Exception as error:  # noqa: BLE001 - AC failure falls back to the panel
         result["ac_error"] = f"{type(error).__name__}: {error}"
+        _progress(f"[committee] area chair failed; using panel median ({result['ac_error']})")
 
     # Area chair unavailable: median scores; the body comes from the survivor whose Overall sits closest to the panel median (ties: first).
     merged = median_scores([member["scores"] for member in survivors])

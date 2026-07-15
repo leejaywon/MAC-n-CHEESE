@@ -12,6 +12,11 @@ __pycache__/
 eval/random_pdf_runs/
 .reviewer_sources/
 
+# Local one-off / batch review outputs
+/review.md
+/review.audit.md
+reviews/
+
 # Editor / IDE
 .vscode/
 .idea/
@@ -26,3 +31,5 @@ dist/
 .mypy_cache/
 .ruff_cache/
 .ipynb_checkpoints/
+
+archive/DevLog.txt

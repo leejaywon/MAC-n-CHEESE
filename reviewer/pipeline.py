@@ -167,10 +167,23 @@ def _previous_freeze(path: Path) -> tuple[str, str] | None:
     return identity.group("value"), verdicts.group("value")
 
 
+def _progress(message: str) -> None:
+    """Emit a one-line progress update for long-running CLI reviews.
+
+    Library/test callers stay quiet unless ``REVIEWER_PROGRESS=1`` is set
+    (``run_review.py`` enables this for interactive runs).
+    """
+
+    if os.environ.get("REVIEWER_PROGRESS") != "1":
+        return
+    print(message, flush=True)
+
+
 def _mark_stage(state: ReviewState, name: str) -> ReviewState:
     """Record a no-op stage so stage order is observable and testable."""
 
     state.completed_stages.append(name)
+    _progress(f"[{name}] done")
     return state
 
 
@@ -986,9 +999,11 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
     """
 
     if not _judgment_enabled():
+        _progress("[committee] skipped (no OPENAI_API_KEY / REVIEWER_BEST_RETRIEVAL)")
         return state
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
+        _progress("[committee] skipped (no OPENAI_API_KEY); legacy retrieval only")
         return _apply_legacy_retrieval_layer(state)
     # Committee enabled (key present) but no model: a config error affecting every
     # paper identically, so fail loud rather than silently downgrade. Raised before
@@ -1005,6 +1020,7 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
         full_paper = paper_text(state.parsed_paper)
         # Reviewer-style prior-art queries (by idea, not title tokens) so retrieval
         # finds the real related work; degrades to the lexical query on failure.
+        _progress("[committee] related-work check...")
         scout_queries = generate_search_queries(
             title=_paper_title(state.parsed_paper),
             abstract=full_paper[:2500],
@@ -1030,6 +1046,7 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
         )
         members = result.get("members", [])
         state.panel_reviews = [dict(member) for member in members]
+        runtime_seconds = round(time.monotonic() - panel_started, 6)
         state.committee_provenance = {
             "layer": "review-panel",
             "panel": result.get("panel"),
@@ -1043,10 +1060,14 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
                 }
                 for member in members
             ],
-            "runtime_seconds": round(time.monotonic() - panel_started, 6),
+            "runtime_seconds": runtime_seconds,
         }
         if not result.get("ok"):
             state.judgment_error = "review panel returned no valid review"
+            _progress(
+                f"[committee] fallback to deterministic audit "
+                f"({state.judgment_error}; {runtime_seconds:.1f}s)"
+            )
             retrieval_comments = [
                 question["text"]
                 for question in retrieval.get("questions", [])
@@ -1077,7 +1098,7 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
                     "Scores section."
                 ),
             }
-        body = str(result["review_markdown"]).strip() + "\n"
+        body = str(result.get("review_markdown")).strip() + "\n"
         if cap_notes:
             body += "\n> " + " ".join(cap_notes) + "\n"
         model = str(result.get("model") or os.environ.get("OPENAI_MODEL") or "unknown")
@@ -1087,6 +1108,12 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
         ).hexdigest()
         state.judgment_error = ""
         state.judgment = {}
+        how = {
+            "area-chair": "area chair final review",
+            "single": "single reviewer",
+            "panel-median": "panel median (area chair unavailable)",
+        }.get(str(result.get("synthesis") or ""), str(result.get("synthesis") or "panel"))
+        _progress(f"[committee] finished ({how}; {runtime_seconds:.1f}s)")
     except Exception as error:  # noqa: BLE001 - one paper failure cannot escape
         state.judgment_identity = ""
         detail = re.sub(r"\s+", " ", str(error)).strip()
@@ -1096,6 +1123,7 @@ def _apply_judgment_layer(state: ReviewState) -> ReviewState:
             else type(error).__name__
         )
         state.judgment = {}
+        _progress(f"[committee] fallback to deterministic audit ({state.judgment_error})")
     return state
 
 

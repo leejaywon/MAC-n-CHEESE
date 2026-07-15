@@ -92,9 +92,9 @@ recommendation (1–6), Confidence (1–5).
 
 ## Outputs
 
-- **`review.md`** — the committee's review, clean of pipeline mechanics and safe
-  for double-blind use.
-- **`review.audit.md`** — the sidecar: content-addressed paper/derived
+- **`review.md`** — the committee's review, safe for double-blind use. When `--out` is omitted, the
+  default is `reviews/<paper-stem>.review.<YYYY-MM-DD>.md`.
+- **`*.audit.md`** — the sidecar next to the review: content-addressed paper/derived
   identities, the S1–S6 evidence trace, and every panel member's full review, so
   each step stays traceable.
 
@@ -104,24 +104,30 @@ itself.
 ## Quick start
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Full review — deterministic audit + LLM committee (needs OPENAI_API_KEY + OPENAI_MODEL):
+# Full review — deterministic audit + LLM committee (needs OPENAI_API_KEY + OPENAI_MODEL).
+# --out filename.md is optional
+python run_review.py path/to/paper.pdf
 python run_review.py path/to/paper.pdf --out review.md
-
-# ...against an evidence bundle:
-python run_review.py path/to/paper.pdf path/to/evidence_dir --out review.md
-
-# Deterministic only — offline, reproducible, no model calls or API cost:
-python run_review.py path/to/paper.pdf --out review.md --deterministic
-
-# Batch (parallel, one process per paper): papers/<name>.(pdf|md) -> reviews/<name>.review.md
-python review_batch.py papers/ --out-dir reviews/ --evidence-root evidence/
 ```
 
 Copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `OPENAI_MODEL` for the
-committee. `--deterministic` never reads it and stays fully offline.
+committee.
+
+Different Options:
+
+```bash
+# Many papers at once (one process per paper):
+python review_batch.py papers/ --out-dir reviews/ --evidence-root evidence/
+
+# With an evidence directory (optional second argument):
+python run_review.py path/to/paper.pdf path/to/evidence_dir
+
+# Offline deterministic check only (no LLM agent reviews):
+python run_review.py path/to/paper.pdf --deterministic
+```
 
 ## Fresh random-PDF smoke and replay
 

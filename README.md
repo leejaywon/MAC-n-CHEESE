@@ -35,15 +35,6 @@ LLM reviewers are easy to fool and hard to trust, so the system is split in two:
   frozen**. The models can enrich the review; they can never quietly rewrite the
   audit's identity or verdict, nor be steered by instructions hidden in a paper.
 
-## Input
-
-- **A paper** (required) — a `.pdf` or `.md` manuscript. PDFs are converted to
-  Markdown automatically.
-- **An evidence bundle** (optional) — a directory of result files the paper's
-  numbers/tables/claims are checked against: `experiments.jsonl` ledgers,
-  CSV/JSON results, logs, appendix. Omit it to review the manuscript on its own;
-  the checks that need no ledger still run.
-
 ## How it works
 
 <p align="center">
@@ -90,17 +81,6 @@ the audit identity or its verdict labels.
 Scores: Soundness / Presentation / Significance / Originality (1–4), Overall
 recommendation (1–6), Confidence (1–5).
 
-## Outputs
-
-- **`review.md`** — the committee's review, safe for double-blind use. When `--out` is omitted, the
-  default is `reviews/<paper-stem>.review.<YYYY-MM-DD>.md`.
-- **`*.audit.md`** — the sidecar next to the review: content-addressed paper/derived
-  identities, the S1–S6 evidence trace, and every panel member's full review, so
-  each step stays traceable.
-
-With `--deterministic` there is no committee: `review.md` is the audit document
-itself.
-
 ## Quick start
 
 ```bash
@@ -128,6 +108,23 @@ python run_review.py path/to/paper.pdf path/to/evidence_dir
 # Offline deterministic check only (no LLM agent reviews):
 python run_review.py path/to/paper.pdf --deterministic
 ```
+
+## Input
+
+- **A paper** (required) — a `.pdf` or `.md` manuscript. PDFs are converted to
+  Markdown automatically.
+- **An evidence bundle** (optional) — a directory of result files the paper's
+  numbers/tables/claims are checked against: `experiments.jsonl` ledgers,
+  CSV/JSON results, logs, appendix. Omit it to review the manuscript on its own;
+  the checks that need no ledger still run.
+
+## Outputs
+
+- **`review.md`** — the committee's review, safe for double-blind use. When `--out` is omitted, the
+  default is `reviews/<paper-stem>.review.<YYYY-MM-DD>.md`.
+- **`*.audit.md`** — the sidecar next to the review: content-addressed paper/derived
+  identities, the S1–S6 evidence trace, and every panel member's full review, so
+  each step stays traceable.
 
 ## Fresh random-PDF smoke and replay
 

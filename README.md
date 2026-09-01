@@ -41,21 +41,20 @@ LLM reviewers are easy to fool and hard to trust, so the system is split in two:
   <img src="docs/mac-figure.png" alt="Pipeline: paper (+ evidence) enters the deterministic audit (parse, claims, mech-check, verdicts, compose, freeze), crosses the freeze barrier, then the sanitized paper and neutral annotations fan out to the theorist, empiricist, and scope-and-ablation panelists, which the Area Chair synthesizes into review.md" width="720">
 </p>
 
-An ordered six-stage pipeline (`reviewer/pipeline.py`): **S1** parse → **S2**
-claim extraction → **S3** mechanical checks → **S4** evidence-bound verdicts →
-**S5** compose → **S6** freeze (content-addressed identity + verdict digest).
-The committee runs **only after S6 is frozen**, so no model output can perturb
+An ordered six-stage pipeline (`reviewer/pipeline.py`): **Parse** → **Claim Extraction** → **Mechanical Checks** → **Evidence-bound Verdicts** →
+**Compose** → **Freeze** (content-addressed identity + verdict digest).
+The committee runs after the script, so no model output can perturb
 the audit identity or its verdict labels.
 
-- **Deterministic checks** (S3, always run) — ledger-trace,
-  internal-consistency, arithmetic, baseline-fairness, negative-evidence,
-  citation-existence, template-compliance, injection-scan, self-review-audit,
-  and scientific positioning (novelty / SOTA-overclaim). Hidden
-  reviewer-directed text is sanitized and reported, never obeyed; near-white,
+- **Deterministic checks** — ledger trace,
+  internal consistency, arithmetic, baseline fairness, negative evidence,
+  citation existence, template compliance, injection scan, self review audit,
+  and scientific positioning. Hidden
+  reviewer directed text is sanitized and reported, never obeyed; near-white,
   transparent, and non-rendering PDF text is quarantined before extraction.
   Findings reach the committee as **neutral annotations** — leads to weigh,
   never verdicts.
-- **Review committee** (default) — `REVIEWER_PANEL` (default 3) **specialist
+- **Review committee** - 'REVIEWER_PANEL' **specialist
   agents** each read the **full sanitized paper** and write a complete ICML
   review with all six scores, running concurrently. They share one rubric and
   differ only in where they look hardest:
@@ -64,13 +63,13 @@ the audit identity or its verdict labels.
     offered;
   - **empiricist** — baselines, ablations, statistical support, and whether the
     experiments actually match the claims;
-  - **scope-and-ablation** — how far the claims travel beyond the tested
+  - **scope-and-ablation** - how far the claims travel beyond the tested
     setting, and which design choices are load-bearing but left unablated.
 
   An **area-chair agent** then synthesizes the final review, checking each panel
   criticism against the paper and dropping anything it cannot ground.
-  `REVIEWER_PANEL=1` runs a single reviewer and skips the area-chair agent.
-  (`reviewer/judgment_review.py`, `reviewer/model_critique.py`)
+  'REVIEWER_PANEL=1' runs a single reviewer and skips the area-chair agent.
+  ('reviewer/judgment_review.py', 'reviewer/model_critique.py')
 
 - **Guardrails on the committee** — a machine-checked title-echo gate rejects a
   review of the wrong paper; a **proven** integrity breach caps Soundness and
@@ -93,7 +92,7 @@ python run_review.py path/to/paper.pdf
 python run_review.py path/to/paper.pdf --out review.md
 ```
 
-Copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `OPENAI_MODEL` for the
+Copy '.env.example' to '.env' and set 'OPENAI_API_KEY' / 'OPENAI_MODEL' for the
 committee.
 
 #### Different Options:
@@ -111,18 +110,18 @@ python run_review.py path/to/paper.pdf --deterministic
 
 ## Input
 
-- **A paper** (required) — a `.pdf` or `.md` manuscript. PDFs are converted to
+- **A paper** (required) — a '.pdf' or '.md' manuscript. PDFs are converted to
   Markdown automatically.
 - **An evidence bundle** (optional) — a directory of result files the paper's
-  numbers/tables/claims are checked against: `experiments.jsonl` ledgers,
+  numbers/tables/claims are checked against: 'experiments.jsonl' ledgers,
   CSV/JSON results, logs, appendix. Omit it to review the manuscript on its own;
   the checks that need no ledger still run.
 
 ## Outputs
 
-- **`review.md`** — the committee's review, safe for double-blind use. When `--out` is omitted, the
-  default is `reviews/<paper-stem>.review.<YYYY-MM-DD>.md`.
-- **`*.audit.md`** — the sidecar next to the review: content-addressed paper/derived
+- **'review.md'** — the committee's review, safe for double-blind use. When '--out' is omitted, the
+  default is 'reviews/<paper-stem>.review.<YYYY-MM-DD>.md'.
+- **'*.audit.md'** — the sidecar next to the review: content-addressed paper/derived
   identities, the S1–S6 evidence trace, and every panel member's full review, so
   each step stays traceable.
 
@@ -145,5 +144,5 @@ python -m unittest discover -s tests -q   # unit + regression suite
 python eval/eval.py                        # detection / false-positive / injection-resistance score
 ```
 
-PDF ingestion requires the optional `pymupdf4llm` dependency (installed via
-`requirements.txt`); Markdown input has no extra dependencies.
+PDF ingestion requires the optional 'pymupdf4llm' dependency (installed via
+'requirements.txt'); Markdown input has no extra dependencies.

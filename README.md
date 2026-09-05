@@ -18,7 +18,7 @@
   An evidence-bound, ICML-style reviewer for scientific papers.
 </h4>
 
-Give it a paper as a **PDF or Markdown** file — optionally with an evidence
+Give it a paper as a **PDF or Markdown** file - optionally with an evidence
 bundle of result files — and it emits a structured ICML-style review whose every
 score and claim is traceable to the paper text, its tables, or the supplied
 results.
